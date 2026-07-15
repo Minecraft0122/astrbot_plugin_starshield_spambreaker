@@ -44,5 +44,41 @@
     "type": "bool",
     "hint": "开启后会把命中的字段、关键字、发送者和消息片段写入 AstrBot 日志。",
     "default": true
+  },
+  "enable_duplicate_recall": {
+    "description": "启用重复刷屏撤回",
+    "type": "bool",
+    "hint": "开启后，同一用户在短时间内反复发送相同文本、图片或表情时会自动撤回。",
+    "default": true
+  },
+  "duplicate_threshold": {
+    "description": "重复触发次数",
+    "type": "int",
+    "hint": "同一用户在时间窗口内发送同一内容达到该次数后触发撤回，最小值为 2。",
+    "default": 5
+  },
+  "duplicate_window_seconds": {
+    "description": "重复检测时间窗口（秒）",
+    "type": "int",
+    "hint": "只统计这个秒数内的重复消息。",
+    "default": 30
+  },
+  "duplicate_case_sensitive": {
+    "description": "重复检测区分大小写",
+    "type": "bool",
+    "hint": "关闭时，重复文本检测会忽略英文大小写，并压缩连续空白。",
+    "default": false
+  },
+  "duplicate_recall_all_in_window": {
+    "description": "撤回窗口内全部重复消息",
+    "type": "bool",
+    "hint": "开启后达到阈值时会尝试撤回本轮时间窗口内记录到的重复消息；关闭则只撤回当前消息。",
+    "default": true
+  },
+  "duplicate_stop_on_recall": {
+    "description": "重复刷屏命中后阻止后续处理",
+    "type": "bool",
+    "hint": "开启后重复刷屏命中会调用 event.stop_event()，避免后续插件和 LLM 继续处理。",
+    "default": true
   }
 }

@@ -1,0 +1,8 @@
+name: astrbot_plugin_keyword_matcher
+display_name: 关键字匹配器
+desc: 匹配用户名或消息正文中包含的指定文字，命中后可回复、记录日志或阻止后续处理。
+short_desc: 按用户名和消息正文关键字匹配消息。
+version: v1.0.0
+author: Codex
+repo: ""
+astrbot_version: ">=4.10.4,<5"

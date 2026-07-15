@@ -1,0 +1,48 @@
+{
+  "username_keywords": {
+    "description": "用户名关键字",
+    "type": "text",
+    "hint": "每行一个关键字。留空表示不匹配用户名。",
+    "default": ""
+  },
+  "message_keywords": {
+    "description": "消息关键字",
+    "type": "text",
+    "hint": "每行一个关键字。留空表示不匹配消息正文。",
+    "default": ""
+  },
+  "match_mode": {
+    "description": "匹配模式",
+    "type": "string",
+    "hint": "any 表示用户名或消息任一命中即可；all 表示已配置的项目都必须命中。",
+    "options": [
+      "any",
+      "all"
+    ],
+    "default": "any"
+  },
+  "case_sensitive": {
+    "description": "区分大小写",
+    "type": "bool",
+    "hint": "关闭时会忽略英文大小写。",
+    "default": false
+  },
+  "reply_text": {
+    "description": "命中回复",
+    "type": "text",
+    "hint": "留空则不回复。可用占位符：{name}、{message}、{field}、{keyword}。",
+    "default": "检测到关键词：{keyword}"
+  },
+  "stop_on_match": {
+    "description": "命中后阻止后续处理",
+    "type": "bool",
+    "hint": "开启后会调用 event.stop_event()，后续插件和 LLM 请求不会继续执行。",
+    "default": false
+  },
+  "log_match": {
+    "description": "记录命中日志",
+    "type": "bool",
+    "hint": "开启后会把命中的字段、关键字、发送者和消息片段写入 AstrBot 日志。",
+    "default": true
+  }
+}

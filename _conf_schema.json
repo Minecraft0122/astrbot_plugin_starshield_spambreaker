@@ -1,84 +1,140 @@
 {
-  "username_keywords": {
-    "description": "用户名关键字",
-    "type": "text",
-    "hint": "每行一个关键字。留空表示不匹配用户名。",
-    "default": ""
-  },
-  "message_keywords": {
-    "description": "消息关键字",
-    "type": "text",
-    "hint": "每行一个关键字。留空表示不匹配消息正文。",
-    "default": ""
-  },
-  "match_mode": {
-    "description": "匹配模式",
-    "type": "string",
-    "hint": "any 表示用户名或消息任一命中即可；all 表示已配置的项目都必须命中。",
-    "options": [
-      "any",
-      "all"
-    ],
-    "default": "any"
+  "enable_recall": {
+    "description": "启用撤回",
+    "type": "bool",
+    "hint": "命中刷屏后尝试撤回消息；非 OneBot 平台仍会阻止后续处理，但无法通用撤回。",
+    "default": true
   },
   "case_sensitive": {
-    "description": "区分大小写",
-    "type": "bool",
-    "hint": "关闭时会忽略英文大小写。",
-    "default": false
-  },
-  "reply_text": {
-    "description": "命中回复",
-    "type": "text",
-    "hint": "留空则不回复。可用占位符：{name}、{message}、{field}、{keyword}。",
-    "default": "检测到关键词：{keyword}"
-  },
-  "stop_on_match": {
-    "description": "命中后阻止后续处理",
-    "type": "bool",
-    "hint": "开启后会调用 event.stop_event()，后续插件和 LLM 请求不会继续执行。",
-    "default": false
-  },
-  "log_match": {
-    "description": "记录命中日志",
-    "type": "bool",
-    "hint": "开启后会把命中的字段、关键字、发送者和消息片段写入 AstrBot 日志。",
-    "default": true
-  },
-  "enable_duplicate_recall": {
-    "description": "启用重复刷屏撤回",
-    "type": "bool",
-    "hint": "开启后，同一用户在短时间内反复发送相同文本、图片或表情时会自动撤回。",
-    "default": true
-  },
-  "duplicate_threshold": {
-    "description": "重复触发次数",
-    "type": "int",
-    "hint": "同一用户在时间窗口内发送同一内容达到该次数后触发撤回，最小值为 2。",
-    "default": 5
-  },
-  "duplicate_window_seconds": {
-    "description": "重复检测时间窗口（秒）",
-    "type": "int",
-    "hint": "只统计这个秒数内的重复消息。",
-    "default": 30
-  },
-  "duplicate_case_sensitive": {
     "description": "重复检测区分大小写",
     "type": "bool",
-    "hint": "关闭时，重复文本检测会忽略英文大小写，并压缩连续空白。",
+    "hint": "关闭时会统一大小写、Unicode 兼容形式、空白和不可见字符。",
     "default": false
   },
-  "duplicate_recall_all_in_window": {
-    "description": "撤回窗口内全部重复消息",
+  "exact_duplicate_window_seconds": {
+    "description": "完全重复检测窗口（秒）",
+    "type": "float",
+    "hint": "同一用户上一条消息在这个时间内完全重复时立即拦截。",
+    "default": 60
+  },
+  "enable_near_duplicate": {
+    "description": "拦截随机尾缀近重复",
     "type": "bool",
-    "hint": "开启后达到阈值时会尝试撤回本轮时间窗口内记录到的重复消息；关闭则只撤回当前消息。",
+    "hint": "检测主体相同、仅在末尾追加少量随机字符的连续消息。",
     "default": true
   },
-  "duplicate_stop_on_recall": {
-    "description": "重复刷屏命中后阻止后续处理",
+  "near_duplicate_window_seconds": {
+    "description": "近重复检测窗口（秒）",
+    "type": "float",
+    "hint": "只与该时间窗口内的近期消息比较。",
+    "default": 60
+  },
+  "near_duplicate_min_chars": {
+    "description": "近重复最短主体长度",
+    "type": "int",
+    "hint": "较短消息低于此长度不会按随机尾缀近重复拦截，避免误伤短句。",
+    "default": 8
+  },
+  "near_duplicate_prefix_ratio": {
+    "description": "近重复主体比例",
+    "type": "float",
+    "hint": "两条消息的最长公共前缀占较短消息的比例达到此值，且差异部分像短随机尾缀时才命中。",
+    "default": 0.65
+  },
+  "near_duplicate_max_suffix_chars": {
+    "description": "近重复最大尾缀长度",
+    "type": "int",
+    "hint": "两条消息除公共前缀外的总长度超过此值时不按随机尾缀处理。",
+    "default": 64
+  },
+  "near_duplicate_history": {
+    "description": "近重复回看条数",
+    "type": "int",
+    "hint": "当前消息最多与同一用户最近的多少条消息比较。",
+    "default": 3
+  },
+  "enable_repeated_content": {
+    "description": "拦截单条重复内容",
     "type": "bool",
-    "hint": "开启后重复刷屏命中会调用 event.stop_event()，避免后续插件和 LLM 继续处理。",
+    "hint": "同一条消息含有连续大量重复片段时拦截。",
     "default": true
+  },
+  "repeat_min_repetitions": {
+    "description": "单条重复最少次数",
+    "type": "int",
+    "hint": "重复片段至少连续出现这么多次才命中。",
+    "default": 4
+  },
+  "repeat_min_chars": {
+    "description": "单条重复最少字符数",
+    "type": "int",
+    "hint": "重复片段总长度必须达到此值。",
+    "default": 12
+  },
+  "repeat_min_coverage": {
+    "description": "单条重复最小覆盖率",
+    "type": "float",
+    "hint": "重复片段总长度占整条消息的比例达到此值才命中。",
+    "default": 0.60
+  },
+  "repeat_max_unit_chars": {
+    "description": "重复片段最大长度",
+    "type": "int",
+    "hint": "扫描重复周期的最大字符长度。",
+    "default": 32
+  },
+  "repeat_scan_chars": {
+    "description": "单条重复扫描上限",
+    "type": "int",
+    "hint": "超长消息只扫描首尾有限字符，避免恶意输入拖慢处理。",
+    "default": 4000
+  },
+  "enable_long_message_burst": {
+    "description": "拦截短时间长消息刷屏",
+    "type": "bool",
+    "hint": "同一用户连续快速发送多条长消息时拦截，不要求消息内容相同。",
+    "default": true
+  },
+  "long_message_chars": {
+    "description": "长消息字符数",
+    "type": "int",
+    "hint": "达到此字符数的消息计入长消息突发检测。",
+    "default": 500
+  },
+  "long_burst_count": {
+    "description": "长消息突发触发条数",
+    "type": "int",
+    "hint": "时间窗口内连续达到此条数才拦截，默认当前消息加前两条。",
+    "default": 3
+  },
+  "long_burst_window_seconds": {
+    "description": "长消息突发窗口（秒）",
+    "type": "float",
+    "hint": "长消息必须在这个总时间窗口内发送。",
+    "default": 15
+  },
+  "long_burst_max_gap_seconds": {
+    "description": "长消息最大间隔（秒）",
+    "type": "float",
+    "hint": "相邻长消息之间的间隔不能超过此值。",
+    "default": 5
+  },
+  "cache_ttl_seconds": {
+    "description": "检测缓存保留时间（秒）",
+    "type": "float",
+    "hint": "超过此时间的历史消息会被清理，避免长期占用内存。",
+    "default": 120
+  },
+  "max_recent_messages": {
+    "description": "每个用户最多缓存消息数",
+    "type": "int",
+    "hint": "限制每个用户的历史队列大小。",
+    "default": 20
+  },
+  "max_senders": {
+    "description": "最多缓存用户数",
+    "type": "int",
+    "hint": "限制插件同时保留的用户状态数，优先清理最久未活动的用户。",
+    "default": 10000
   }
 }

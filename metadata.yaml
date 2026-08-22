@@ -1,8 +1,8 @@
 name: astrbot_plugin_keyword_matcher
-display_name: 关键字匹配器
-desc: 匹配用户名或消息正文中包含的指定文字，并检测同一用户重复刷屏；命中后可回复、记录日志、撤回或阻止后续处理。
-short_desc: 按关键字匹配消息，并撤回重复刷屏。
-version: v1.1.0
+display_name: 反刷屏卫士
+desc: 防止连续重复、随机尾缀近重复、单条高重复内容和短时间长消息刷屏；命中后可阻止后续处理并尝试撤回。
+short_desc: 多策略检测并拦截刷屏消息。
+version: v1.2.0
 author: Codex
 repo: https://github.com/Minecraft0122/astrbot_plugin_keyword_matcher
 astrbot_version: ">=4.10.4,<5"

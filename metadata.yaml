@@ -4,5 +4,5 @@ desc: 拦截连续重复、随机尾缀近重复、单条高重复内容和短�
 short_desc: 多策略检测并拦截刷屏消息。
 version: v1.3.0
 author: Codex
-repo: https://github.com/Minecraft0122/astrbot_plugin_keyword_matcher
+repo: https://github.com/Minecraft0122/astrbot_plugin_starshield_spambreaker
 astrbot_version: ">=4.10.4,<5"

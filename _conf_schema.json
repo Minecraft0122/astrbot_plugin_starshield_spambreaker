@@ -33,13 +33,13 @@
     "description": "近重复最短主体长度",
     "type": "int",
     "hint": "较短消息低于此长度不会按随机尾缀近重复拦截，避免误伤短句。",
-    "default": 8
+    "default": 12
   },
   "near_duplicate_prefix_ratio": {
     "description": "近重复主体比例",
     "type": "float",
     "hint": "两条消息的最长公共前缀占较短消息的比例达到此值，且差异部分像短随机尾缀时才命中。",
-    "default": 0.65
+    "default": 0.75
   },
   "near_duplicate_max_suffix_chars": {
     "description": "近重复最大尾缀长度",

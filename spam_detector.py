@@ -140,14 +140,14 @@ class SpamDetector:
         self.near_duplicate_min_chars = _as_int(
             self.config,
             "near_duplicate_min_chars",
-            default=8,
+            default=12,
             minimum=4,
             maximum=10000,
         )
         self.near_duplicate_ratio = _as_float(
             self.config,
             "near_duplicate_prefix_ratio",
-            default=0.65,
+            default=0.75,
             minimum=0.5,
             maximum=1.0,
         )
@@ -403,8 +403,15 @@ class SpamDetector:
         # original normalized form for exact/near duplicate comparisons.
         scan_text = "".join(normalized.split())
         if len(scan_text) > self.repeat_scan_chars:
-            half = self.repeat_scan_chars // 2
-            segments = (scan_text[:half], scan_text[-half:])
+            # Keep the scan bounded while covering the beginning, middle, and
+            # end. A repeated block in the middle must not be able to evade
+            # detection merely by padding the message at both ends.
+            last_start = len(scan_text) - self.repeat_scan_chars
+            starts = {0, last_start // 2, last_start}
+            segments = tuple(
+                scan_text[start : start + self.repeat_scan_chars]
+                for start in sorted(starts)
+            )
         else:
             segments = (scan_text,)
 
@@ -519,11 +526,19 @@ def _common_prefix_length(left: str, right: str) -> int:
 
 
 def _looks_like_random_tail(*tails: str) -> bool:
-    """Recognize common short ASCII noise tokens without stripping real text."""
+    """Recognize append-only noise without treating normal prose as noise.
+
+    Short ASCII suffixes are inherently ambiguous. They are accepted only when
+    the compared messages have different suffixes, which is the characteristic
+    pattern of a sender adding a fresh token to every copy. Unicode suffixes
+    need more varied characters so ordinary Chinese addenda such as ``谢谢``
+    remain allowed.
+    """
 
     non_empty = [tail for tail in tails if tail]
     if not non_empty:
         return False
+    different_suffixes = len(set(non_empty)) > 1
 
     for tail in non_empty:
         if len(tail) > 64 or any(character.isspace() for character in tail):
@@ -531,6 +546,16 @@ def _looks_like_random_tail(*tails: str) -> bool:
         ascii_characters = [character for character in tail if ord(character) < 128]
         ascii_ratio = len(ascii_characters) / len(tail)
         if ascii_ratio >= 0.75:
+            if len(tail) <= 3:
+                # A one-to-three character ASCII token is accepted only when
+                # it changes between messages; otherwise it may be a normal
+                # suffix such as a version label.
+                if different_suffixes and all(
+                    character.isalnum() or character in "-_=+~.!@#$%^&*?/\\|"
+                    for character in tail
+                ):
+                    continue
+                return False
             if any(character.isdigit() for character in tail):
                 continue
             if any(character in "-_~|=+*/\\" for character in tail):
@@ -540,13 +565,21 @@ def _looks_like_random_tail(*tails: str) -> bool:
             ):
                 continue
             # An unseparated ASCII suffix is a common random-token bypass.
-            if len(tail) >= 4 and len(set(tail)) / len(tail) >= 0.5:
+            if (
+                different_suffixes
+                and len(tail) >= 4
+                and len(set(tail)) / len(tail) >= 0.5
+            ):
                 continue
             return False
 
-        # Unicode random tails need to be longer and more varied so a normal
-        # Chinese addendum such as "谢谢" is not treated as noise.
-        if len(tail) >= 5 and len(set(tail)) / len(tail) >= 0.8:
+        # Unicode random tails need to be varied. Four or more differing CJK
+        # characters are enough when both messages carry different suffixes;
+        # a single message needs a longer token to avoid false positives.
+        if (
+            len(tail) >= (4 if different_suffixes else 6)
+            and len(set(tail)) / len(tail) >= 0.8
+        ):
             continue
         return False
     return True

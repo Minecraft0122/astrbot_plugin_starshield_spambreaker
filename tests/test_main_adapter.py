@@ -119,6 +119,14 @@ class FakeEvent:
         self.stopped = True
 
 
+class AnonymousEvent(FakeEvent):
+    def get_sender_id(self):
+        return ""
+
+    def get_sender_name(self):
+        return ""
+
+
 class MainAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -197,6 +205,16 @@ class MainAdapterTests(unittest.TestCase):
         asyncio.run(plugin.on_all_message(first))
         asyncio.run(plugin.on_all_message(second))
         self.assertTrue(second.stopped)
+
+    def test_anonymous_events_do_not_share_sender_state(self):
+        plugin = self.make_plugin()
+        first = AnonymousEvent("重复消息内容", "m1")
+        second = AnonymousEvent("重复消息内容", "m2")
+
+        asyncio.run(plugin.on_all_message(first))
+        asyncio.run(plugin.on_all_message(second))
+
+        self.assertFalse(second.stopped)
 
 
 if __name__ == "__main__":

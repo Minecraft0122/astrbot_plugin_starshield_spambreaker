@@ -59,6 +59,30 @@ class SpamDetectorTests(unittest.TestCase):
         )
         self.assertTrue(decision.blocked)
 
+    def test_short_changing_ascii_suffix_is_near_duplicate(self):
+        detector = self.make_detector()
+        base = "请所有成员按照公告安排完成本次维护准备工作"
+        detector.check("group:user", base + "a", timestamp=0)
+        decision = detector.check("group:user", base + "b", timestamp=1)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "near_duplicate")
+
+    def test_short_changing_unicode_suffix_is_near_duplicate(self):
+        detector = self.make_detector()
+        base = "请所有成员按照公告安排完成本次维护准备工作"
+        detector.check("group:user", base + "鰯鱟麤龘", timestamp=0)
+        decision = detector.check("group:user", base + "麤龘鰯鱟", timestamp=1)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "near_duplicate")
+
+    def test_long_random_suffix_is_near_duplicate(self):
+        detector = self.make_detector()
+        base = "服务器什么时候重启以及维护安排请看公告请所有成员提前做好准备" * 3
+        detector.check("group:user", base + "-a1B2" * 8, timestamp=0)
+        decision = detector.check("group:user", base + "-z9X8" * 8, timestamp=1)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "near_duplicate")
+
     def test_varied_unicode_suffix_is_near_duplicate(self):
         detector = self.make_detector(near_duplicate_min_chars=8)
         detector.check("group:user", "请大家在群里保持安静-鰯鱟麤龘龗", timestamp=0)
@@ -118,6 +142,18 @@ class SpamDetectorTests(unittest.TestCase):
     def test_repeated_phrase_with_spaces_is_blocked(self):
         detector = self.make_detector()
         decision = detector.check("group:user", "神经病 " * 10, timestamp=0)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "repeated_content")
+
+    def test_repeated_phrase_in_middle_of_long_message_is_blocked(self):
+        detector = self.make_detector(repeat_scan_chars=1000)
+        prefix = "".join(chr(0x4E00 + index) for index in range(300))
+        suffix = "".join(chr(0x5200 + index) for index in range(300))
+        decision = detector.check(
+            "group:user",
+            prefix + ("神经病" * 300) + suffix,
+            timestamp=0,
+        )
         self.assertTrue(decision.blocked)
         self.assertEqual(decision.reason, "repeated_content")
 

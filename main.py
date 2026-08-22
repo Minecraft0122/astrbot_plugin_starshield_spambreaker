@@ -17,7 +17,8 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
+PLUGIN_VERSION = "1.3.0"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -69,6 +70,51 @@ def _message_id(event: AstrMessageEvent) -> str:
     else:
         value = getattr(message_obj, "message_id", "")
     return str(value or "")
+
+
+def _sender_key(
+    event: AstrMessageEvent,
+    platform_id: str,
+    session_id: str,
+    sender_id: str,
+    sender_name: str,
+) -> str:
+    """Build a per-sender key without merging anonymous users."""
+
+    stable_sender = sender_id
+    if not stable_sender:
+        message_obj = getattr(event, "message_obj", None)
+        containers = [message_obj]
+        if isinstance(message_obj, dict):
+            containers.append(message_obj.get("sender"))
+        else:
+            containers.append(getattr(message_obj, "sender", None))
+
+        for container in containers:
+            if isinstance(container, dict):
+                stable_sender = str(
+                    container.get("user_id")
+                    or container.get("sender_id")
+                    or container.get("id")
+                    or ""
+                )
+            elif container is not None:
+                stable_sender = str(
+                    getattr(container, "user_id", "")
+                    or getattr(container, "sender_id", "")
+                    or getattr(container, "id", "")
+                    or ""
+                )
+            if stable_sender:
+                break
+
+    stable_sender = stable_sender or sender_name
+    if not stable_sender:
+        # An adapter without any sender identity cannot safely share state
+        # with other users. Isolate this event instead of using one global
+        # ``unknown`` bucket that would create false positives.
+        stable_sender = f"event:{id(event)}"
+    return f"{platform_id}:{session_id}:{stable_sender}"
 
 
 def _component_mapping(component: Any) -> dict[str, Any]:
@@ -145,7 +191,7 @@ def _media_comparison_key(event: AstrMessageEvent) -> str:
 @register(
     PLUGIN_NAME,
     "Codex",
-    "拦截连续重复、随机尾缀近重复、单条高重复内容和短时间长消息刷屏。",
+    f"{PLUGIN_DISPLAY_NAME}：拦截连续重复、随机尾缀近重复、单条高重复内容和短时间长消息刷屏。",
     PLUGIN_VERSION,
 )
 class KeywordMatcherPlugin(Star):
@@ -164,8 +210,12 @@ class KeywordMatcherPlugin(Star):
         session_id = _value_from_event(event, "get_session_id")
         sender_id = _value_from_event(event, "get_sender_id")
         sender_name = _value_from_event(event, "get_sender_name")
-        sender_key = (
-            f"{platform_id}:{session_id}:{sender_id or sender_name or 'unknown'}"
+        sender_key = _sender_key(
+            event,
+            platform_id,
+            session_id,
+            sender_id,
+            sender_name,
         )
         text = _message_text(event)
         media_key = _media_comparison_key(event)

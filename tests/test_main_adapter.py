@@ -137,7 +137,7 @@ class MainAdapterTests(unittest.TestCase):
     def make_plugin(self, **config):
         return self.main.KeywordMatcherPlugin(object(), config)
 
-    def test_exact_duplicate_stops_and_recalls_both_messages(self):
+    def test_exact_duplicate_stops_and_recalls_only_new_message(self):
         plugin = self.make_plugin()
         first = FakeEvent("重复消息内容", "m1")
         second = FakeEvent("重复消息内容", "m2")
@@ -149,10 +149,35 @@ class MainAdapterTests(unittest.TestCase):
         self.assertTrue(second.stopped)
         self.assertEqual(
             second.bot.api.calls,
-            [
-                ("delete_msg", {"message_id": "m2"}),
-                ("delete_msg", {"message_id": "m1"}),
-            ],
+            [("delete_msg", {"message_id": "m2"})],
+        )
+
+    def test_near_duplicate_recalls_only_new_message(self):
+        plugin = self.make_plugin()
+        base = "服务器什么时候重启以及维护安排请看公告请所有成员提前做好准备"
+        first = FakeEvent(base + "-a81k2", "m1")
+        second = FakeEvent(base + "-zP93x", "m2")
+
+        asyncio.run(plugin.on_all_message(first))
+        asyncio.run(plugin.on_all_message(second))
+
+        self.assertFalse(first.stopped)
+        self.assertTrue(second.stopped)
+        self.assertEqual(
+            second.bot.api.calls,
+            [("delete_msg", {"message_id": "m2"})],
+        )
+
+    def test_repeated_content_recalls_only_current_message(self):
+        plugin = self.make_plugin()
+        event = FakeEvent("神经病" * 12, "m1")
+
+        asyncio.run(plugin.on_all_message(event))
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(
+            event.bot.api.calls,
+            [("delete_msg", {"message_id": "m1"})],
         )
 
     def test_non_onebot_stops_without_recall_error(self):

@@ -106,12 +106,11 @@ class SpamDecision:
 @dataclass
 class _SenderState:
     recent: deque[MessageSnapshot] = field(default_factory=deque)
-    long_messages: deque[MessageSnapshot] = field(default_factory=deque)
     last_seen: float = 0.0
 
 
 class SpamDetector:
-    """Detect exact/near duplicates, repeated content, and long-message bursts."""
+    """Detect short-window duplicates and excessive repetition in one message."""
 
     def __init__(self, config: Mapping[str, Any] | None = None):
         self.config: Mapping[str, Any] = config or {}
@@ -204,38 +203,6 @@ class SpamDetector:
             minimum=100,
             maximum=20000,
         )
-        self.long_burst_enabled = _as_bool(
-            self.config.get("enable_long_message_burst"),
-            default=True,
-        )
-        self.long_message_chars = _as_int(
-            self.config,
-            "long_message_chars",
-            default=500,
-            minimum=50,
-            maximum=1000000,
-        )
-        self.long_burst_count = _as_int(
-            self.config,
-            "long_burst_count",
-            default=3,
-            minimum=2,
-            maximum=20,
-        )
-        self.long_burst_window_seconds = _as_float(
-            self.config,
-            "long_burst_window_seconds",
-            default=15.0,
-            minimum=1.0,
-            maximum=86400.0,
-        )
-        self.long_burst_max_gap_seconds = _as_float(
-            self.config,
-            "long_burst_max_gap_seconds",
-            default=5.0,
-            minimum=0.1,
-            maximum=86400.0,
-        )
         self.cache_ttl_seconds = _as_float(
             self.config,
             "cache_ttl_seconds",
@@ -304,7 +271,7 @@ class SpamDetector:
                 decision = SpamDecision(
                     reason="exact_duplicate",
                     detail="与该用户上一条消息规范化后完全一致",
-                    message_ids=_ids(current, previous),
+                    message_ids=_ids(current),
                 )
             elif normalized and self.near_duplicate_enabled:
                 near_match = self._find_near_duplicate(current, state.recent)
@@ -312,7 +279,7 @@ class SpamDetector:
                     decision = SpamDecision(
                         reason="near_duplicate",
                         detail="与近期消息拥有相同主体，仅追加了短尾部内容",
-                        message_ids=_ids(current, near_match),
+                        message_ids=_ids(current),
                     )
 
             if decision is None and normalized and self.repeated_content_enabled:
@@ -331,10 +298,6 @@ class SpamDetector:
         state.recent.append(current)
         if len(state.recent) > self.max_recent_messages:
             state.recent.popleft()
-
-        long_decision = self._check_long_burst(state, current)
-        if decision is None and long_decision is not None:
-            decision = long_decision
 
         self._prune_state(state, now)
         self._trim_senders()
@@ -461,50 +424,9 @@ class SpamDetector:
                     return unit_length, count, coverage
         return None
 
-    def _check_long_burst(
-        self,
-        state: _SenderState,
-        current: MessageSnapshot,
-    ) -> SpamDecision | None:
-        if (
-            not self.long_burst_enabled
-            or len(current.normalized) < self.long_message_chars
-        ):
-            return None
-
-        state.long_messages.append(current)
-        while state.long_messages and (
-            current.timestamp - state.long_messages[0].timestamp
-            > self.long_burst_window_seconds
-        ):
-            state.long_messages.popleft()
-
-        if len(state.long_messages) < self.long_burst_count:
-            return None
-
-        candidates = list(state.long_messages)[-self.long_burst_count :]
-        if any(
-            right.timestamp - left.timestamp > self.long_burst_max_gap_seconds
-            for left, right in zip(candidates, candidates[1:])
-        ):
-            return None
-
-        return SpamDecision(
-            reason="long_message_burst",
-            detail=(
-                f"{len(candidates)} 条长度不少于 {self.long_message_chars} 的消息"
-                f"在 {candidates[-1].timestamp - candidates[0].timestamp:.1f} 秒内连续发送"
-            ),
-            message_ids=_ids(current, *candidates[:-1]),
-        )
-
     def _prune_state(self, state: _SenderState, now: float) -> None:
         while state.recent and now - state.recent[0].timestamp > self.cache_ttl_seconds:
             state.recent.popleft()
-        while state.long_messages and (
-            now - state.long_messages[0].timestamp > self.long_burst_window_seconds
-        ):
-            state.long_messages.popleft()
 
     def _trim_senders(self) -> None:
         if len(self._states) <= self.max_senders:

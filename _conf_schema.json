@@ -14,7 +14,7 @@
   "exact_duplicate_window_seconds": {
     "description": "完全重复检测窗口（秒）",
     "type": "float",
-    "hint": "同一用户上一条消息在这个时间内完全重复时立即拦截。",
+    "hint": "仅在短时间内检查同一用户上一条规范化后完全一致的消息。",
     "default": 60
   },
   "enable_near_duplicate": {
@@ -26,7 +26,7 @@
   "near_duplicate_window_seconds": {
     "description": "近重复检测窗口（秒）",
     "type": "float",
-    "hint": "只与该时间窗口内的近期消息比较。",
+    "hint": "只与该短时间窗口内的近期消息比较。",
     "default": 60
   },
   "near_duplicate_min_chars": {
@@ -88,36 +88,6 @@
     "type": "int",
     "hint": "超长消息只扫描首尾有限字符，避免恶意输入拖慢处理。",
     "default": 4000
-  },
-  "enable_long_message_burst": {
-    "description": "拦截短时间长消息刷屏",
-    "type": "bool",
-    "hint": "同一用户连续快速发送多条长消息时拦截，不要求消息内容相同。",
-    "default": true
-  },
-  "long_message_chars": {
-    "description": "长消息字符数",
-    "type": "int",
-    "hint": "达到此字符数的消息计入长消息突发检测。",
-    "default": 500
-  },
-  "long_burst_count": {
-    "description": "长消息突发触发条数",
-    "type": "int",
-    "hint": "时间窗口内连续达到此条数才拦截，默认当前消息加前两条。",
-    "default": 3
-  },
-  "long_burst_window_seconds": {
-    "description": "长消息突发窗口（秒）",
-    "type": "float",
-    "hint": "长消息必须在这个总时间窗口内发送。",
-    "default": 15
-  },
-  "long_burst_max_gap_seconds": {
-    "description": "长消息最大间隔（秒）",
-    "type": "float",
-    "hint": "相邻长消息之间的间隔不能超过此值。",
-    "default": 5
   },
   "cache_ttl_seconds": {
     "description": "检测缓存保留时间（秒）",

@@ -1,8 +1,8 @@
 name: astrbot_plugin_keyword_matcher
 display_name: 星盾·刷屏终结者
-desc: 拦截连续重复、随机尾缀近重复、单条高重复内容和短时间长消息刷屏；命中后可阻止后续处理并尝试撤回。
-short_desc: 多策略检测并拦截刷屏消息。
-version: v1.3.0
+desc: 只拦截短时间相似消息和单条高重复内容；命中后可阻止后续处理并尝试撤回当前消息。
+short_desc: 检测短时间相似消息和单条高重复内容。
+version: v1.4.0
 author: Codex
 repo: https://github.com/Minecraft0122/astrbot_plugin_starshield_spambreaker
 astrbot_version: ">=4.10.4,<5"

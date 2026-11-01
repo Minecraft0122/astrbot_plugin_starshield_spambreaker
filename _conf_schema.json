@@ -11,6 +11,24 @@
     "hint": "关闭时会统一大小写、Unicode 兼容形式、空白和不可见字符。",
     "default": false
   },
+  "enable_pinyin_keywords": {
+    "description": "启用拼音违禁词检测",
+    "type": "bool",
+    "hint": "检测配置词表的原文和无声调拼音写法。",
+    "default": true
+  },
+  "banned_words": {
+    "description": "违禁词列表",
+    "type": "text",
+    "hint": "每行填写一个中文关键词；拼音检测会同时匹配对应的无声调拼音。",
+    "default": ""
+  },
+  "pinyin_max_combinations": {
+    "description": "多音字拼音组合上限",
+    "type": "int",
+    "hint": "限制多音字词条的组合数量，以控制检测开销。",
+    "default": 32
+  },
   "exact_duplicate_window_seconds": {
     "description": "完全重复检测窗口（秒）",
     "type": "float",
@@ -58,6 +76,30 @@
     "type": "bool",
     "hint": "同一条消息含有连续大量重复片段时拦截。",
     "default": true
+  },
+  "enable_long_message_burst": {
+    "description": "拦截短时间长消息刷屏",
+    "type": "bool",
+    "hint": "同一用户在短窗口内发送多条长消息时拦截达到阈值的消息。",
+    "default": true
+  },
+  "long_message_min_chars": {
+    "description": "长消息最少字符数",
+    "type": "int",
+    "hint": "达到此长度的消息会计入短时间长消息刷屏检测。",
+    "default": 300
+  },
+  "long_message_max_messages": {
+    "description": "长消息刷屏条数阈值",
+    "type": "int",
+    "hint": "窗口内达到此条数时拦截当前消息。",
+    "default": 3
+  },
+  "long_message_window_seconds": {
+    "description": "长消息刷屏时间窗口（秒）",
+    "type": "float",
+    "hint": "仅统计此时间窗口内已放行的长消息。",
+    "default": 10
   },
   "repeat_min_repetitions": {
     "description": "单条重复最少次数",

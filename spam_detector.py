@@ -12,6 +12,9 @@ import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+import re
+
+from pypinyin import Style, pinyin
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -81,6 +84,84 @@ def normalize_text(value: str, *, case_sensitive: bool = False) -> str:
     return normalized if case_sensitive else normalized.casefold()
 
 
+def _pinyin_forms(value: str, max_combinations: int) -> set[str]:
+    """Build bounded, tone-free readings for a configured Chinese keyword."""
+
+    syllables = pinyin(
+        value,
+        style=Style.NORMAL,
+        heteronym=True,
+        errors=lambda chars: list(chars),
+    )
+    forms = {""}
+    for options in syllables:
+        choices = {option.casefold() for option in options if option}
+        if not choices:
+            continue
+        next_forms: set[str] = set()
+        for prefix in sorted(forms):
+            for choice in sorted(choices):
+                next_forms.add(prefix + choice)
+                if len(next_forms) >= max_combinations:
+                    break
+            if len(next_forms) >= max_combinations:
+                break
+        forms = next_forms
+    return {form for form in forms if form}
+
+
+class PinyinKeywordDetector:
+    """Match configured Chinese keywords by literal text or pinyin spelling."""
+
+    def __init__(self, config: Mapping[str, Any]):
+        self.enabled = _as_bool(config.get("enable_pinyin_keywords"), default=True)
+        self.max_combinations = _as_int(
+            config,
+            "pinyin_max_combinations",
+            default=32,
+            minimum=1,
+            maximum=256,
+        )
+        raw_words = config.get("banned_words", "")
+        if isinstance(raw_words, str):
+            words = raw_words.splitlines()
+        elif isinstance(raw_words, (list, tuple, set)):
+            words = [str(word) for word in raw_words]
+        else:
+            words = []
+        self.words = tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
+        self.index: dict[str, str] = {}
+        self.max_keyword_chars = 1
+        if self.enabled:
+            for word in self.words:
+                self.max_keyword_chars = max(self.max_keyword_chars, len(word))
+                for form in _pinyin_forms(word, self.max_combinations):
+                    self.index.setdefault(form, word)
+
+    def check(self, text: str) -> str:
+        if not self.enabled or not self.index or not text:
+            return ""
+        normalized = normalize_text(text)
+        for word in self.words:
+            if normalize_text(word) in normalized:
+                return word
+        # Compare contiguous alphanumeric runs to avoid matching a short pinyin
+        # syllable inside unrelated English words.
+        for token in re.findall(r"[a-z0-9]+|[\u3400-\u9fff]+", normalized):
+            if token.isascii():
+                if token in self.index:
+                    return self.index[token]
+                continue
+            max_length = min(len(token), self.max_keyword_chars)
+            for start in range(len(token)):
+                for length in range(1, max_length + 1):
+                    candidate = token[start : start + length]
+                    for form in _pinyin_forms(candidate, self.max_combinations):
+                        if form in self.index:
+                            return self.index[form]
+        return ""
+
+
 @dataclass(frozen=True)
 class MessageSnapshot:
     timestamp: float
@@ -106,6 +187,7 @@ class SpamDecision:
 @dataclass
 class _SenderState:
     recent: deque[MessageSnapshot] = field(default_factory=deque)
+    long_message_times: deque[float] = field(default_factory=deque)
     last_seen: float = 0.0
 
 
@@ -224,6 +306,31 @@ class SpamDetector:
             minimum=1,
             maximum=1000000,
         )
+        self.long_message_enabled = _as_bool(
+            self.config.get("enable_long_message_burst"), default=True
+        )
+        self.long_message_min_chars = _as_int(
+            self.config,
+            "long_message_min_chars",
+            default=300,
+            minimum=32,
+            maximum=100000,
+        )
+        self.long_message_max_messages = _as_int(
+            self.config,
+            "long_message_max_messages",
+            default=3,
+            minimum=2,
+            maximum=100,
+        )
+        self.long_message_window_seconds = _as_float(
+            self.config,
+            "long_message_window_seconds",
+            default=10.0,
+            minimum=0.1,
+            maximum=86400.0,
+        )
+        self.pinyin_detector = PinyinKeywordDetector(self.config)
         self._states: dict[str, _SenderState] = {}
 
     def check(
@@ -263,11 +370,27 @@ class SpamDetector:
         state.last_seen = now
         self._prune_state(state, now)
 
-        previous = state.recent[-1] if state.recent else None
-        decision: SpamDecision | None = None
+        banned_word = self.pinyin_detector.check(raw_text)
+        decision: SpamDecision | None = (
+            SpamDecision(
+                reason="banned_keyword",
+                detail=f"消息命中违禁词或其拼音形式：{banned_word}",
+                message_ids=_ids(current),
+            )
+            if banned_word
+            else None
+        )
 
-        if current.comparison_key:
-            if self._is_exact_duplicate(current, previous):
+        if decision is None and current.comparison_key:
+            duplicate = next(
+                (
+                    item
+                    for item in reversed(state.recent)
+                    if self._is_exact_duplicate(current, item)
+                ),
+                None,
+            )
+            if duplicate is not None:
                 decision = SpamDecision(
                     reason="exact_duplicate",
                     detail="与该用户上一条消息规范化后完全一致",
@@ -295,9 +418,31 @@ class SpamDetector:
                         message_ids=_ids(current),
                     )
 
-        state.recent.append(current)
-        if len(state.recent) > self.max_recent_messages:
-            state.recent.popleft()
+        if decision is None and self.long_message_enabled:
+            while (
+                state.long_message_times
+                and now - state.long_message_times[0] > self.long_message_window_seconds
+            ):
+                state.long_message_times.popleft()
+            if len(raw_text) >= self.long_message_min_chars:
+                if len(state.long_message_times) >= self.long_message_max_messages - 1:
+                    decision = SpamDecision(
+                        reason="long_message_burst",
+                        detail=(
+                            f"{self.long_message_max_messages} 条至少 "
+                            f"{self.long_message_min_chars} 字符的消息在 "
+                            f"{self.long_message_window_seconds:g} 秒内发送"
+                        ),
+                        message_ids=_ids(current),
+                    )
+                else:
+                    state.long_message_times.append(now)
+
+        # Only accepted messages contribute evidence for subsequent checks.
+        if decision is None:
+            state.recent.append(current)
+            if len(state.recent) > self.max_recent_messages:
+                state.recent.popleft()
 
         self._prune_state(state, now)
         self._trim_senders()
@@ -427,6 +572,11 @@ class SpamDetector:
     def _prune_state(self, state: _SenderState, now: float) -> None:
         while state.recent and now - state.recent[0].timestamp > self.cache_ttl_seconds:
             state.recent.popleft()
+        while (
+            state.long_message_times
+            and now - state.long_message_times[0] > self.long_message_window_seconds
+        ):
+            state.long_message_times.popleft()
 
     def _trim_senders(self) -> None:
         if len(self._states) <= self.max_senders:

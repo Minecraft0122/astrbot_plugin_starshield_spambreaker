@@ -19,6 +19,27 @@ class SpamDetectorTests(unittest.TestCase):
             "abc 123",
         )
 
+    def test_configured_keyword_matches_chinese_and_pinyin(self):
+        detector = self.make_detector(banned_words="傻逼\n我操")
+        self.assertEqual(
+            detector.check("group:user", "你这个傻逼", timestamp=0).reason,
+            "banned_keyword",
+        )
+        self.assertEqual(
+            detector.check("group:user", "shabi", timestamp=1).reason,
+            "banned_keyword",
+        )
+        self.assertEqual(
+            detector.check("group:user", "nihao", timestamp=2).blocked,
+            False,
+        )
+
+    def test_pinyin_keyword_detection_can_be_disabled(self):
+        detector = self.make_detector(
+            banned_words="傻逼", enable_pinyin_keywords=False
+        )
+        self.assertFalse(detector.check("group:user", "shabi", timestamp=0).blocked)
+
     def test_second_exact_message_is_blocked(self):
         detector = self.make_detector()
         self.assertFalse(
@@ -39,12 +60,48 @@ class SpamDetectorTests(unittest.TestCase):
         decision = detector.check("group:user", "请注意这条消息", timestamp=6)
         self.assertFalse(decision.blocked)
 
-    def test_non_consecutive_duplicate_is_not_exact_duplicate(self):
+    def test_non_consecutive_duplicate_within_window_is_blocked(self):
         detector = self.make_detector()
         detector.check("group:user", "第一条消息", timestamp=0)
         detector.check("group:user", "第二条消息", timestamp=1)
         decision = detector.check("group:user", "第一条消息", timestamp=2)
-        self.assertFalse(decision.blocked)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "exact_duplicate")
+
+    def test_blocked_messages_do_not_enter_history(self):
+        detector = self.make_detector(enable_long_message_burst=False)
+        detector.check("group:user", "第一条消息", timestamp=0)
+        self.assertTrue(detector.check("group:user", "第一条消息", timestamp=1).blocked)
+        self.assertFalse(detector.check("group:user", "第二条消息", timestamp=2).blocked)
+
+    def test_long_message_burst_blocks_threshold_message(self):
+        detector = self.make_detector(
+            enable_long_message_burst=True,
+            enable_repeated_content=False,
+            enable_near_duplicate=False,
+            long_message_min_chars=32,
+            long_message_max_messages=3,
+            long_message_window_seconds=10,
+        )
+        message = "长" * 32
+        self.assertFalse(detector.check("group:user", message, timestamp=0).blocked)
+        self.assertFalse(detector.check("group:user", message + "1", timestamp=2).blocked)
+        decision = detector.check("group:user", message + "2", timestamp=3)
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason, "long_message_burst")
+
+    def test_long_message_burst_expires(self):
+        detector = self.make_detector(
+            enable_repeated_content=False,
+            enable_near_duplicate=False,
+            long_message_min_chars=32,
+            long_message_max_messages=3,
+            long_message_window_seconds=5,
+        )
+        message = "长" * 32
+        detector.check("group:user", message, timestamp=0)
+        detector.check("group:user", message + "1", timestamp=1)
+        self.assertFalse(detector.check("group:user", message + "2", timestamp=7).blocked)
 
     def test_random_suffix_is_near_duplicate(self):
         detector = self.make_detector()
@@ -176,7 +233,7 @@ class SpamDetectorTests(unittest.TestCase):
         self.assertFalse(decision.blocked)
 
     def test_different_long_messages_in_short_window_are_allowed(self):
-        detector = self.make_detector()
+        detector = self.make_detector(enable_long_message_burst=False)
         for index in range(3):
             text = "".join(
                 chr(0x4E00 + index * 600 + offset) for offset in range(500)

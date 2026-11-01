@@ -18,7 +18,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.4.0"
+PLUGIN_VERSION = "1.6.0"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 

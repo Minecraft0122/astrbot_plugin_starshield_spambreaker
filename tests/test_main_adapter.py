@@ -180,6 +180,18 @@ class MainAdapterTests(unittest.TestCase):
             [("delete_msg", {"message_id": "m1"})],
         )
 
+    def test_configured_pinyin_keyword_stops_message(self):
+        plugin = self.make_plugin(banned_words="傻逼")
+        event = FakeEvent("shabi", "m1")
+
+        asyncio.run(plugin.on_all_message(event))
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(
+            event.bot.api.calls,
+            [("delete_msg", {"message_id": "m1"})],
+        )
+
     def test_non_onebot_stops_without_recall_error(self):
         plugin = self.make_plugin()
         first = FakeEvent("重复消息内容", "m1", platform="telegram")

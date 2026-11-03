@@ -84,6 +84,13 @@ def normalize_text(value: str, *, case_sensitive: bool = False) -> str:
     return normalized if case_sensitive else normalized.casefold()
 
 
+def _compact_keyword_text(value: str) -> str:
+    """Remove separators commonly inserted between letters to evade matching."""
+
+    normalized = normalize_text(value)
+    return re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", normalized)
+
+
 def _pinyin_forms(value: str, max_combinations: int) -> set[str]:
     """Build bounded, tone-free readings for a configured Chinese keyword."""
 
@@ -142,12 +149,13 @@ class PinyinKeywordDetector:
         if not self.enabled or not self.index or not text:
             return ""
         normalized = normalize_text(text)
+        compact = _compact_keyword_text(text)
         for word in self.words:
-            if normalize_text(word) in normalized:
+            if normalize_text(word) in normalized or _compact_keyword_text(word) in compact:
                 return word
         # Compare contiguous alphanumeric runs to avoid matching a short pinyin
         # syllable inside unrelated English words.
-        for token in re.findall(r"[a-z0-9]+|[\u3400-\u9fff]+", normalized):
+        for token in re.findall(r"[a-z0-9]+|[\u3400-\u9fff]+", compact):
             if token.isascii():
                 if token in self.index:
                     return self.index[token]

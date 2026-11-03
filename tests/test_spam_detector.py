@@ -40,6 +40,17 @@ class SpamDetectorTests(unittest.TestCase):
         )
         self.assertFalse(detector.check("group:user", "shabi", timestamp=0).blocked)
 
+    def test_keyword_detects_newline_split_hanzi(self):
+        detector = self.make_detector(banned_words="调教\n你妈")
+        self.assertEqual(
+            detector.check("group:user", "调\n教", timestamp=0).reason,
+            "banned_keyword",
+        )
+        self.assertEqual(
+            detector.check("group:user", "你\n妈", timestamp=1).reason,
+            "banned_keyword",
+        )
+
     def test_second_exact_message_is_blocked(self):
         detector = self.make_detector()
         self.assertFalse(

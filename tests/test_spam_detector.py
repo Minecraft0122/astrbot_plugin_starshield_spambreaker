@@ -51,6 +51,16 @@ class SpamDetectorTests(unittest.TestCase):
             "banned_keyword",
         )
 
+    def test_keyword_detects_obfuscation_variants(self):
+        detector = self.make_detector(banned_words="调教\n傻逼")
+        for text in ("调1教", "调！教", "s h a b i", "sh4bi", "ѕhаbi", "shàbī"):
+            with self.subTest(text=text):
+                self.assertTrue(detector.check("group:user", text, timestamp=0).blocked)
+
+    def test_pinyin_lookalike_mapping_does_not_match_unrelated_word(self):
+        detector = self.make_detector(banned_words="傻逼")
+        self.assertFalse(detector.check("group:user", "shape", timestamp=0).blocked)
+
     def test_second_exact_message_is_blocked(self):
         detector = self.make_detector()
         self.assertFalse(

@@ -7,12 +7,12 @@ can decide how to stop or recall a message.
 
 from __future__ import annotations
 
+import re
 import time
 import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Mapping
-import re
 
 from pypinyin import Style, pinyin
 
@@ -87,8 +87,43 @@ def normalize_text(value: str, *, case_sensitive: bool = False) -> str:
 def _compact_keyword_text(value: str) -> str:
     """Remove separators commonly inserted between letters to evade matching."""
 
-    normalized = normalize_text(value)
-    return re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", normalized)
+    normalized = unicodedata.normalize("NFKD", normalize_text(value))
+    normalized = "".join(
+        character
+        for character in normalized
+        if not unicodedata.category(character).startswith("M")
+    )
+    lookalikes = str.maketrans(
+        {
+            "а": "a", "ɑ": "a", "α": "a",
+            "е": "e", "ε": "e",
+            "і": "i", "ι": "i", "ӏ": "l",
+            "о": "o", "ο": "o",
+            "р": "p", "ρ": "p",
+            "с": "c", "ϲ": "c", "ѕ": "s",
+            "х": "x", "χ": "x",
+            "у": "y", "ν": "v",
+        }
+    )
+    leet = str.maketrans(
+        {
+            "4": "a", "@": "a", "3": "e", "1": "i", "!": "i",
+            "0": "o", "$": "s", "5": "s", "7": "t",
+        }
+    )
+    compact = re.sub(
+        r"[^0-9a-z\u3400-\u9fff\U00020000-\U0002FA1Fа-яα-ωϲɑӏ]+",
+        "",
+        normalized.translate(lookalikes),
+    )
+    # Digits used as separators between Han characters should not split a word.
+    compact = re.sub(
+        r"(?<=[\u3400-\u9fff\U00020000-\U0002FA1F])[0-9]+"
+        r"(?=[\u3400-\u9fff\U00020000-\U0002FA1F])",
+        "",
+        compact,
+    )
+    return compact.translate(leet)
 
 
 def _pinyin_forms(value: str, max_combinations: int) -> set[str]:

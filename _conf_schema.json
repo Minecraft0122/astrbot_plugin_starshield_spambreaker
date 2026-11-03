@@ -29,6 +29,18 @@
     "hint": "限制多音字词条的组合数量，以控制检测开销。",
     "default": 32
   },
+  "enable_blank_message_detection": {
+    "description": "拦截空白消息和大量空行",
+    "type": "bool",
+    "hint": "拦截纯空白消息，以及达到连续空白行阈值的消息。",
+    "default": true
+  },
+  "max_consecutive_blank_lines": {
+    "description": "连续空白行阈值",
+    "type": "int",
+    "hint": "正文消息中连续空白行达到此数量时拦截；默认 5 行。",
+    "default": 5
+  },
   "exact_duplicate_window_seconds": {
     "description": "完全重复检测窗口（秒）",
     "type": "float",

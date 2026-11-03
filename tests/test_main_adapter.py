@@ -192,6 +192,18 @@ class MainAdapterTests(unittest.TestCase):
             [("delete_msg", {"message_id": "m1"})],
         )
 
+    def test_blank_message_stops_and_recalls_current_message(self):
+        plugin = self.make_plugin()
+        event = FakeEvent(" \n\t", "m1")
+
+        asyncio.run(plugin.on_all_message(event))
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(
+            event.bot.api.calls,
+            [("delete_msg", {"message_id": "m1"})],
+        )
+
     def test_non_onebot_stops_without_recall_error(self):
         plugin = self.make_plugin()
         first = FakeEvent("重复消息内容", "m1", platform="telegram")

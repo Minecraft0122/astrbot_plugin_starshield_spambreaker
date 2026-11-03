@@ -126,6 +126,18 @@ def _compact_keyword_text(value: str) -> str:
     return compact.translate(leet)
 
 
+def _has_excessive_blank_lines(value: str, threshold: int) -> bool:
+    consecutive = 0
+    for line in value.splitlines():
+        if not line.strip():
+            consecutive += 1
+            if consecutive >= threshold:
+                return True
+        else:
+            consecutive = 0
+    return False
+
+
 def _pinyin_forms(value: str, max_combinations: int) -> set[str]:
     """Build bounded, tone-free readings for a configured Chinese keyword."""
 
@@ -373,6 +385,16 @@ class SpamDetector:
             minimum=0.1,
             maximum=86400.0,
         )
+        self.blank_message_detection = _as_bool(
+            self.config.get("enable_blank_message_detection"), default=True
+        )
+        self.max_consecutive_blank_lines = _as_int(
+            self.config,
+            "max_consecutive_blank_lines",
+            default=5,
+            minimum=2,
+            maximum=100,
+        )
         self.pinyin_detector = PinyinKeywordDetector(self.config)
         self._states: dict[str, _SenderState] = {}
 
@@ -413,16 +435,35 @@ class SpamDetector:
         state.last_seen = now
         self._prune_state(state, now)
 
-        banned_word = self.pinyin_detector.check(raw_text)
-        decision: SpamDecision | None = (
-            SpamDecision(
+        if (
+            self.blank_message_detection
+            and not raw_text.strip()
+            and not current.comparison_key
+        ):
+            decision: SpamDecision | None = SpamDecision(
+                reason="blank_message",
+                detail="消息只包含空白字符",
+                message_ids=_ids(current),
+            )
+        elif self.blank_message_detection and _has_excessive_blank_lines(
+            raw_text, self.max_consecutive_blank_lines
+        ):
+            decision = SpamDecision(
+                reason="excessive_blank_lines",
+                detail=f"连续空白行达到 {self.max_consecutive_blank_lines} 行",
+                message_ids=_ids(current),
+            )
+        else:
+            banned_word = self.pinyin_detector.check(raw_text)
+            decision = (
+                SpamDecision(
                 reason="banned_keyword",
                 detail=f"消息命中违禁词或其拼音形式：{banned_word}",
                 message_ids=_ids(current),
             )
-            if banned_word
-            else None
-        )
+                if banned_word
+                else None
+            )
 
         if decision is None and current.comparison_key:
             duplicate = next(

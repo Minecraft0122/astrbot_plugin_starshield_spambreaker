@@ -61,6 +61,29 @@ class SpamDetectorTests(unittest.TestCase):
         detector = self.make_detector(banned_words="傻逼")
         self.assertFalse(detector.check("group:user", "shape", timestamp=0).blocked)
 
+    def test_whitespace_only_message_is_blocked(self):
+        detector = self.make_detector()
+        for text in ("", "   ", "\n", " \t\r\n \u3000"):
+            with self.subTest(text=repr(text)):
+                self.assertEqual(
+                    detector.check("group:user", text, timestamp=0).reason,
+                    "blank_message",
+                )
+
+    def test_excessive_blank_lines_are_blocked(self):
+        detector = self.make_detector(max_consecutive_blank_lines=4)
+        self.assertEqual(
+            detector.check("group:user", "正文\n\n\n\n\n更多正文", timestamp=0).reason,
+            "excessive_blank_lines",
+        )
+        self.assertFalse(
+            detector.check("other:user", "正文\n\n更多正文", timestamp=0).blocked
+        )
+
+    def test_blank_message_detection_can_be_disabled(self):
+        detector = self.make_detector(enable_blank_message_detection=False)
+        self.assertFalse(detector.check("group:user", " \n ", timestamp=0).blocked)
+
     def test_second_exact_message_is_blocked(self):
         detector = self.make_detector()
         self.assertFalse(

@@ -17,6 +17,22 @@ from typing import Any, Mapping
 from pypinyin import Style, pinyin
 
 
+DEFAULT_BANNED_WORDS = (
+    "fuck", "shit", "bitch", "asshole", "bastard", "cunt", "whore", "slut",
+    "retard", "cnm", "nmsl", "混蛋", "傻逼", "傻比", "傻叉", "傻屄", "傻吊",
+    "傻狗", "煞笔", "沙比", "狗逼", "狗币", "草泥马", "操你妈", "操你",
+    "妈的", "嘛的", "麻的", "马的", "妈德", "马德", "他妈的", "你妈的",
+    "去你妈", "滚你妈的", "草你妈", "艹你妈", "肏你妈", "操你娘", "草你娘",
+    "干你妈", "干你娘", "操你全家", "狗日的", "狗娘养的", "王八蛋", "王八羔子",
+    "龟儿子", "杂种", "贱人", "贱货", "贱逼", "二逼", "二比", "傻B", "傻X",
+    "脑残", "脑瘫", "弱智", "废物", "垃圾", "狗东西", "妈逼", "日你妈",
+    "死妈", "妈卖批", "妈了个逼", "尼玛", "婊子", "滚蛋", "外挂", "作弊",
+    "自瞄", "透视挂", "杀戮光环", "脚本挂", "科技挂", "出售外挂", "游戏外挂",
+    "免费外挂", "外挂出售", "外挂购买", "买外挂", "卖外挂", "买挂", "卖挂",
+    "租外挂", "外挂群", "加群买挂",
+)
+
+
 def _as_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -129,7 +145,11 @@ def _compact_keyword_text(value: str) -> str:
 def _has_excessive_blank_lines(value: str, threshold: int) -> bool:
     consecutive = 0
     for line in value.splitlines():
-        if not line.strip():
+        if all(
+            character.isspace()
+            or unicodedata.category(character).startswith(("C", "M"))
+            for character in line
+        ):
             consecutive += 1
             if consecutive >= threshold:
                 return True
@@ -176,7 +196,7 @@ class PinyinKeywordDetector:
             minimum=1,
             maximum=256,
         )
-        raw_words = config.get("banned_words", "")
+        raw_words = config.get("banned_words", DEFAULT_BANNED_WORDS)
         if isinstance(raw_words, str):
             words = raw_words.splitlines()
         elif isinstance(raw_words, (list, tuple, set)):
@@ -185,10 +205,8 @@ class PinyinKeywordDetector:
             words = []
         self.words = tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
         self.index: dict[str, str] = {}
-        self.max_keyword_chars = 1
         if self.enabled:
             for word in self.words:
-                self.max_keyword_chars = max(self.max_keyword_chars, len(word))
                 for form in _pinyin_forms(word, self.max_combinations):
                     self.index.setdefault(form, word)
 
@@ -202,18 +220,27 @@ class PinyinKeywordDetector:
                 return word
         # Compare contiguous alphanumeric runs to avoid matching a short pinyin
         # syllable inside unrelated English words.
-        for token in re.findall(r"[a-z0-9]+|[\u3400-\u9fff]+", compact):
+        for token in re.findall(
+            r"[a-z0-9]+|[\u3400-\u9fff\U00020000-\U0002FA1F]+", compact
+        ):
             if token.isascii():
                 if token in self.index:
                     return self.index[token]
+                match = next(
+                    (
+                        word
+                        for form, word in self.index.items()
+                        if len(form) >= 3 and form in token
+                    ),
+                    "",
+                )
+                if match:
+                    return match
                 continue
-            max_length = min(len(token), self.max_keyword_chars)
-            for start in range(len(token)):
-                for length in range(1, max_length + 1):
-                    candidate = token[start : start + length]
-                    for form in _pinyin_forms(candidate, self.max_combinations):
-                        if form in self.index:
-                            return self.index[form]
+            forms = _pinyin_forms(token, self.max_combinations)
+            match = next((self.index[form] for form in forms if form in self.index), "")
+            if match:
+                return match
         return ""
 
 
@@ -437,7 +464,7 @@ class SpamDetector:
 
         if (
             self.blank_message_detection
-            and not raw_text.strip()
+            and not normalized.strip()
             and not current.comparison_key
         ):
             decision: SpamDecision | None = SpamDecision(

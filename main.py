@@ -18,7 +18,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.7.0"
+PLUGIN_VERSION = "1.9.0"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -191,7 +191,7 @@ def _media_comparison_key(event: AstrMessageEvent) -> str:
 @register(
     PLUGIN_NAME,
     "Codex",
-    f"{PLUGIN_DISPLAY_NAME}：拦截短时间相似消息和单条高重复内容。",
+    f"{PLUGIN_DISPLAY_NAME}：检测违禁词、空白消息和多种刷屏内容。",
     PLUGIN_VERSION,
 )
 class KeywordMatcherPlugin(Star):

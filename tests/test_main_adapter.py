@@ -3,6 +3,9 @@ import importlib
 import sys
 import types
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 
 def _install_astrbot_stubs():
@@ -136,6 +139,60 @@ class MainAdapterTests(unittest.TestCase):
 
     def make_plugin(self, **config):
         return self.main.KeywordMatcherPlugin(object(), config)
+
+    def test_keyword_migration_persists_defaults_and_legacy_custom_words(self):
+        from spam_detector import DEFAULT_BANNED_WORDS
+
+        class SavedConfig(dict):
+            def save_config(self):
+                config_path.write_text(json.dumps(self, ensure_ascii=False), encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            for old_value in ([], "", "自定义词\n另一个词", ["自定义词"]):
+                with self.subTest(old_value=old_value):
+                    config = SavedConfig(banned_words=old_value)
+                    self.main.KeywordMatcherPlugin(object(), config)
+                    saved = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertFalse(saved["initialize_banned_words"])
+                    self.assertTrue(set(DEFAULT_BANNED_WORDS).issubset(saved["banned_words"]))
+                    if old_value:
+                        self.assertIn("自定义词", saved["banned_words"])
+                    config["banned_words"] = []
+                    config.save_config()
+                    self.main.KeywordMatcherPlugin(object(), config)
+                    self.assertEqual(config["banned_words"], [])
+                    self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["banned_words"], [])
+                    config["initialize_banned_words"] = True
+                    self.main.KeywordMatcherPlugin(object(), config)
+                    self.assertEqual(config["banned_words"], list(DEFAULT_BANNED_WORDS))
+
+    def test_keyword_migration_preserves_explicit_custom_words(self):
+        plugin = self.make_plugin(banned_words=["外挂", "自定义词"])
+        self.assertIn("外挂", plugin.config["banned_words"])
+        self.assertIn("自定义词", plugin.config["banned_words"])
+
+    def test_keyword_migration_replaces_exact_former_defaults(self):
+        from spam_detector import DEFAULT_BANNED_WORDS
+
+        old_words = [*DEFAULT_BANNED_WORDS, "垃圾", "滚蛋", "外挂", "作弊"]
+        plugin = self.make_plugin(banned_words=old_words)
+        self.assertEqual(plugin.config["banned_words"], list(DEFAULT_BANNED_WORDS))
+
+    def test_keyword_migration_save_failure_preserves_original_config(self):
+        class FailingConfig(dict):
+            def save_config(self):
+                raise OSError("read-only config")
+
+        config = FailingConfig(banned_words="自定义词", enable_recall=False)
+        original = dict(config)
+        with self.assertRaises(OSError):
+            self.main.KeywordMatcherPlugin(object(), config)
+        self.assertEqual(config, original)
+
+    def test_legacy_text_converts_without_restoring_deleted_defaults(self):
+        plugin = self.make_plugin(banned_words="自定义词\n另一个词", initialize_banned_words=False)
+        self.assertEqual(plugin.config["banned_words"], ["自定义词", "另一个词"])
 
     def test_exact_duplicate_stops_and_recalls_only_new_message(self):
         plugin = self.make_plugin()

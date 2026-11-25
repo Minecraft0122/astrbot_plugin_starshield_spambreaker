@@ -11,14 +11,14 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 try:
-    from .spam_detector import SpamDetector
+    from .spam_detector import DEFAULT_BANNED_WORDS, SpamDetector
 except ImportError:  # AstrBot may load main.py as a standalone module.
-    from spam_detector import SpamDetector
+    from spam_detector import DEFAULT_BANNED_WORDS, SpamDetector
 
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.0"
+PLUGIN_VERSION = "1.9.1"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -198,9 +198,44 @@ class KeywordMatcherPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config if config is not None else {}
+        self._initialize_keyword_list()
         self.detector = SpamDetector(self.config)
         self._detector_lock = Lock()
         self._recalled_message_ids: dict[str, float] = {}
+
+    def _initialize_keyword_list(self) -> None:
+        """Persist defaults once so upgrades expose the effective list in WebUI."""
+        raw_words = self.config.get("banned_words")
+        initialize = _config_bool(self.config, "initialize_banned_words", True)
+        if isinstance(raw_words, str):
+            words = raw_words.splitlines()
+        elif isinstance(raw_words, list):
+            words = [str(word) for word in raw_words]
+        else:
+            words = []
+        words = [word.strip() for word in words if word.strip()]
+        if initialize:
+            # Only replace the exact former default set. A customized list is
+            # administrator-owned, even when it contains a broad keyword.
+            former_defaults = set(DEFAULT_BANNED_WORDS) | {"垃圾", "滚蛋", "外挂", "作弊"}
+            if set(words) == former_defaults:
+                words = list(DEFAULT_BANNED_WORDS)
+            words = list(dict.fromkeys([*DEFAULT_BANNED_WORDS, *words]))
+        if not initialize and raw_words == words:
+            return
+
+        previous = dict(self.config)
+        self.config["banned_words"] = words
+        self.config["initialize_banned_words"] = False
+        save_config = getattr(self.config, "save_config", None)
+        if callable(save_config):
+            try:
+                save_config()
+            except Exception:
+                self.config.clear()
+                self.config.update(previous)
+                raise
+        logger.info(f"[{PLUGIN_NAME}] initialized keyword list ({len(words)} entries)")
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):

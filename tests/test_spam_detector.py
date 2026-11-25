@@ -45,6 +45,28 @@ class SpamDetectorTests(unittest.TestCase):
             "banned_keyword",
         )
 
+    def test_separator_only_keywords_do_not_match_every_message(self):
+        for keyword in ("!!!", "---", "\u200b"):
+            with self.subTest(keyword=keyword):
+                detector = self.make_detector(banned_words=[keyword])
+                self.assertFalse(detector.check("u", "ordinary chat", timestamp=0).blocked)
+        detector = self.make_detector(banned_words=["!!!"])
+        self.assertEqual(detector.check("u", "hello!!!", timestamp=0).reason, "banned_keyword")
+
+    def test_default_words_allow_broad_normal_discussion(self):
+        for text in ("如何举报外挂", "如何防止作弊", "清理垃圾文件", "滚蛋这个词是什么意思"):
+            with self.subTest(text=text):
+                self.assertFalse(self.make_detector().check("u", text, timestamp=0).blocked)
+        self.assertEqual(self.make_detector().check("u", "出售外挂", timestamp=0).reason, "banned_keyword")
+
+    def test_schema_defaults_match_detector_defaults(self):
+        import json
+        from pathlib import Path
+        from spam_detector import DEFAULT_BANNED_WORDS
+
+        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(schema["banned_words"]["default"], list(DEFAULT_BANNED_WORDS))
+
     def test_list_and_legacy_text_keyword_configurations_are_supported(self):
         list_detector = self.make_detector(banned_words=["自定义词"])
         text_detector = self.make_detector(banned_words="自定义词\n另一个词")

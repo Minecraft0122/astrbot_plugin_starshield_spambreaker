@@ -25,8 +25,8 @@ DEFAULT_BANNED_WORDS = (
     "去你妈", "滚你妈的", "草你妈", "艹你妈", "肏你妈", "操你娘", "草你娘",
     "干你妈", "干你娘", "操你全家", "狗日的", "狗娘养的", "王八蛋", "王八羔子",
     "龟儿子", "杂种", "贱人", "贱货", "贱逼", "二逼", "二比", "傻B", "傻X",
-    "脑残", "脑瘫", "弱智", "废物", "垃圾", "狗东西", "妈逼", "日你妈",
-    "死妈", "妈卖批", "妈了个逼", "尼玛", "婊子", "滚蛋", "外挂", "作弊",
+    "脑残", "脑瘫", "弱智", "废物", "狗东西", "妈逼", "日你妈",
+    "死妈", "妈卖批", "妈了个逼", "尼玛", "婊子",
     "自瞄", "透视挂", "杀戮光环", "脚本挂", "科技挂", "出售外挂", "游戏外挂",
     "免费外挂", "外挂出售", "外挂购买", "买外挂", "卖外挂", "买挂", "卖挂",
     "租外挂", "外挂群", "加群买挂",
@@ -204,6 +204,11 @@ class PinyinKeywordDetector:
         else:
             words = []
         self.words = tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
+        self.literal_forms = tuple(
+            (word, normalize_text(word), _compact_keyword_text(word))
+            for word in self.words
+            if normalize_text(word)
+        )
         self.index: dict[str, str] = {}
         if self.enabled:
             for word in self.words:
@@ -215,8 +220,8 @@ class PinyinKeywordDetector:
             return ""
         normalized = normalize_text(text)
         compact = _compact_keyword_text(text)
-        for word in self.words:
-            if normalize_text(word) in normalized or _compact_keyword_text(word) in compact:
+        for word, literal, compact_word in self.literal_forms:
+            if literal in normalized or (compact_word and compact_word in compact):
                 return word
         # Compare contiguous alphanumeric runs to avoid matching a short pinyin
         # syllable inside unrelated English words.

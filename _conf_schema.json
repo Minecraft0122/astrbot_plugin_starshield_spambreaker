@@ -2,8 +2,14 @@
   "enable_recall": {
     "description": "启用撤回",
     "type": "bool",
-    "hint": "命中刷屏后尝试撤回消息；非 OneBot 平台仍会阻止后续处理，但无法通用撤回。",
+    "hint": "仅 OneBot / aiocqhttp 尝试撤回。QQ 官方 Bot（WebSocket / Webhook）命中后会停止 AstrBot 后续处理，但本插件不会撤回 QQ 中的用户原消息。",
     "default": true
+  },
+  "enable_block_notice": {
+    "description": "发送拦截提示",
+    "type": "bool",
+    "hint": "命中后尝试发送原因提示，方便确认 QQ 官方 Bot 等不支持撤回的平台是否命中。默认关闭，避免刷屏时产生大量回复；发送仍受平台权限和频率限制。",
+    "default": false
   },
   "case_sensitive": {
     "description": "重复检测区分大小写",

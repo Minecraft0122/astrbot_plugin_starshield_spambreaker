@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -18,7 +19,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.1"
+PLUGIN_VERSION = "1.9.2"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -59,8 +60,22 @@ def _message_text(event: AstrMessageEvent) -> str:
             value = ""
     if value:
         return str(value)
-
-    return ""
+    get_messages = getattr(event, "get_messages", None)
+    try:
+        components = get_messages() if callable(get_messages) else []
+    except Exception:
+        components = []
+    # Some integrations expose the original Plain chain but leave message_str
+    # empty. Read only top-level text, never quoted messages or attachment URLs.
+    parts = []
+    for component in components or []:
+        data = _component_mapping(component)
+        component_type = str(data.get("type", getattr(component, "type", "")))
+        if component_type.lower().split(".")[-1] in {"plain", "text"}:
+            content = data.get("data", data)
+            if isinstance(content, dict):
+                parts.append(str(content.get("text", "") or ""))
+    return "".join(parts)
 
 
 def _message_id(event: AstrMessageEvent) -> str:
@@ -160,7 +175,9 @@ def _media_comparison_key(event: AstrMessageEvent) -> str:
     for component in components:
         data = _component_mapping(component)
         component_type = str(data.get("type", getattr(component, "type", "")))
-        if component_type.lower().endswith(("plain", "text")):
+        if component_type.lower().split(".")[-1] in {
+            "plain", "text", "at", "atall", "reply",
+        }:
             continue
         component_data = data.get("data", data)
         if isinstance(component_data, dict):
@@ -202,6 +219,7 @@ class KeywordMatcherPlugin(Star):
         self.detector = SpamDetector(self.config)
         self._detector_lock = Lock()
         self._recalled_message_ids: dict[str, float] = {}
+        self._warned_recall_platforms: set[str] = set()
 
     def _initialize_keyword_list(self) -> None:
         """Persist defaults once so upgrades expose the effective list in WebUI."""
@@ -237,7 +255,7 @@ class KeywordMatcherPlugin(Star):
                 raise
         logger.info(f"[{PLUGIN_NAME}] initialized keyword list ({len(words)} entries)")
 
-    @filter.event_message_type(filter.EventMessageType.ALL)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=10000)
     async def on_all_message(self, event: AstrMessageEvent):
         """检查所有消息，命中刷屏规则后停止后续处理并尽力撤回。"""
 
@@ -255,6 +273,12 @@ class KeywordMatcherPlugin(Star):
         text = _message_text(event)
         media_key = _media_comparison_key(event)
         message_id = _message_id(event)
+        platform_name = _value_from_event(event, "get_platform_name")
+        logger.debug(
+            f"[{PLUGIN_NAME}] inspect platform={platform_name!r} "
+            f"instance={platform_id!r} message_id={message_id!r} "
+            f"text_chars={len(text)} has_media={bool(media_key)}"
+        )
 
         with self._detector_lock:
             decision = self.detector.check(
@@ -269,11 +293,35 @@ class KeywordMatcherPlugin(Star):
         # Stop first: recall is platform-dependent and must not delay blocking
         # downstream plugins or an LLM request.
         event.stop_event()
+        should_call_llm = getattr(event, "should_call_llm", None)
+        if callable(should_call_llm):
+            should_call_llm(False)
         logger.info(
             f"[{PLUGIN_NAME}] blocked spam reason={decision.reason} "
             f"sender={sender_name or sender_id or 'unknown'!r} "
-            f"platform={platform_id!r} detail={decision.detail}"
+            f"platform={platform_name!r} instance={platform_id!r} "
+            f"message_id={message_id!r} detail={decision.detail}"
         )
+
+        if _config_bool(self.config, "enable_block_notice", False):
+            reasons = {
+                "banned_keyword": "违禁词",
+                "blank_message": "空白消息",
+                "excessive_blank_lines": "连续空行过多",
+                "exact_duplicate": "重复消息",
+                "near_duplicate": "近似重复消息",
+                "repeated_content": "内容大量重复",
+                "long_message_burst": "长消息刷屏",
+            }
+            try:
+                await asyncio.wait_for(
+                    event.send(event.plain_result(
+                        f"星盾已拦截本条消息的机器人处理：{reasons.get(decision.reason, '刷屏')}。"
+                    )),
+                    timeout=5,
+                )
+            except Exception as exc:
+                logger.warning(f"[{PLUGIN_NAME}] failed to send block notice: {exc}")
 
         if _config_bool(self.config, "enable_recall", True):
             # Historical messages are used only as comparison evidence. Never
@@ -311,6 +359,15 @@ class KeywordMatcherPlugin(Star):
     ) -> bool:
         platform_name = _value_from_event(event, "get_platform_name")
         if platform_name != "aiocqhttp":
+            if (
+                platform_name in {"qq_official", "qq_official_webhook"}
+                and platform_name not in self._warned_recall_platforms
+            ):
+                self._warned_recall_platforms.add(platform_name)
+                logger.warning(
+                    f"[{PLUGIN_NAME}] {platform_name}: 已停止 AstrBot 后续处理和默认 LLM 回复；"
+                    "本插件未实现 QQ 官方 Bot 的用户消息撤回，QQ 中的原消息仍会保留。"
+                )
             logger.debug(
                 f"[{PLUGIN_NAME}] platform={platform_name!r} has no generic recall API"
             )

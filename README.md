@@ -11,6 +11,14 @@
 
 命中后会调用 `event.stop_event()`，阻止后续插件和 LLM 继续处理。启用撤回时，`aiocqhttp` / OneBot 适配器会调用 `delete_msg` 只尝试撤回当前命中的新消息；其他平台没有统一的撤回接口，但仍会阻止后续处理并记录日志。
 
+### QQ 官方 Bot 的能力与验证
+
+QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook`）收到的文字消息均走相同检测逻辑。检测以高优先级运行，命中后停止后续事件处理并关闭本事件的默认 LLM 调用。本插件未实现官方 Bot 的用户消息撤回，因此 QQ 中原消息仍会存在；默认也不发送提示。
+
+验证时可打开“发送拦截提示”（`enable_block_notice`），保存并重载插件，再向机器人发送词表中确实存在的词（如 `傻逼`）。命中日志包含 `blocked spam reason=banned_keyword`、平台名称与消息 ID，开启提示后还会尝试回复原因。日志级别为 DEBUG 时，每次进入检测都有 `inspect platform=...` 记录，不记录正文。如果没有进入检测日志，请检查插件是否加载成功、是否被当前配置启用，以及官方平台是否确实将该消息投递给 AstrBot。仅发送普通消息而未触发官方平台订阅/权限允许的事件时，插件无法检测未收到的消息。
+
+拦截只影响执行到本插件之后的 AstrBot 处理；优先级高于本插件的其他处理器、框架前置步骤和平台侧行为不在此范围内。提示发送也受官方接口权限和频率限制，发送失败会记日志，不会解除拦截。
+
 ## 安装
 
 将插件目录放到 AstrBot 的 `data/plugins/astrbot_plugin_keyword_matcher` 下，在 WebUI 中重载插件或重启 AstrBot。

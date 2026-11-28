@@ -26,8 +26,11 @@ def _install_astrbot_stubs():
 
     class Filter:
         @staticmethod
-        def event_message_type(_message_type):
-            return lambda function: function
+        def event_message_type(_message_type, **kwargs):
+            def decorate(function):
+                function.handler_priority = kwargs.get("priority", 0)
+                return function
+            return decorate
 
     Filter.EventMessageType = EventMessageType
 
@@ -130,6 +133,38 @@ class AnonymousEvent(FakeEvent):
         return ""
 
 
+class QQOfficialEvent(FakeEvent):
+    """Match the normalized object/Plain/At shape of both official adapters."""
+
+    def __init__(self, text, message_id, platform="qq_official", *, plain_only=False):
+        super().__init__(text, message_id, platform=platform)
+        self.message_obj = types.SimpleNamespace(
+            message_id=message_id,
+            sender=types.SimpleNamespace(user_id="member-openid", nickname="tester"),
+            group_id="group-openid",
+        )
+        self.components = [types.SimpleNamespace(toDict=lambda: {"type": "At", "qq": "qq_official"}), FakePlainComponent(text)]
+        if plain_only:
+            self.message_str = ""
+        self.call_llm = True
+        self.notices = []
+        self.notice_failure = False
+
+    def get_platform_id(self):
+        return "official-instance-1"
+
+    def should_call_llm(self, enabled):
+        self.call_llm = enabled
+
+    def plain_result(self, text):
+        return text
+
+    async def send(self, result):
+        if self.notice_failure:
+            raise RuntimeError("QQ rate limit")
+        self.notices.append(result)
+
+
 class MainAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -139,6 +174,65 @@ class MainAdapterTests(unittest.TestCase):
 
     def make_plugin(self, **config):
         return self.main.KeywordMatcherPlugin(object(), config)
+
+    def test_official_adapters_block_keywords_without_onebot_api(self):
+        for platform in ("qq_official", "qq_official_webhook"):
+            for plain_only in (False, True):
+                with self.subTest(platform=platform, plain_only=plain_only):
+                    plugin = self.make_plugin()
+                    event = QQOfficialEvent("傻逼", "official-id", platform, plain_only=plain_only)
+                    asyncio.run(plugin.on_all_message(event))
+                    self.assertTrue(event.stopped)
+                    self.assertFalse(event.call_llm)
+                    self.assertEqual(event.bot.api.calls, [])
+                    self.assertEqual(event.notices, [])
+
+    def test_official_at_component_does_not_hide_blank_message(self):
+        plugin = self.make_plugin()
+        event = QQOfficialEvent("   ", "blank-id")
+        asyncio.run(plugin.on_all_message(event))
+        self.assertTrue(event.stopped)
+        self.assertFalse(event.call_llm)
+
+    def test_official_block_notice_and_send_failure_preserve_blocking(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                plugin = self.make_plugin(enable_block_notice=True)
+                event = QQOfficialEvent("傻逼", "notice-id")
+                event.notice_failure = fail
+                asyncio.run(plugin.on_all_message(event))
+                self.assertTrue(event.stopped)
+                self.assertFalse(event.call_llm)
+                self.assertEqual(len(event.notices), 0 if fail else 1)
+                if not fail:
+                    self.assertIn("违禁词", event.notices[0])
+
+    def test_official_normal_message_is_not_stopped(self):
+        plugin = self.make_plugin(enable_block_notice=True)
+        event = QQOfficialEvent("你好，今天的天气怎么样", "normal-id")
+        asyncio.run(plugin.on_all_message(event))
+        self.assertFalse(event.stopped)
+        self.assertTrue(event.call_llm)
+        self.assertEqual(event.notices, [])
+
+    def test_detection_precedes_default_priority_reply_handler(self):
+        plugin = self.make_plugin()
+        event = QQOfficialEvent("傻逼", "priority-id")
+        replied = []
+
+        async def reply_handler(event):
+            replied.append("reply")
+
+        async def dispatch():
+            handlers = [(plugin.on_all_message.handler_priority, plugin.on_all_message), (0, reply_handler)]
+            for _, handler in sorted(handlers, key=lambda item: -item[0]):
+                await handler(event)
+                if event.stopped:
+                    break
+
+        asyncio.run(dispatch())
+        self.assertTrue(event.stopped)
+        self.assertEqual(replied, [])
 
     def test_keyword_migration_persists_defaults_and_legacy_custom_words(self):
         from spam_detector import DEFAULT_BANNED_WORDS

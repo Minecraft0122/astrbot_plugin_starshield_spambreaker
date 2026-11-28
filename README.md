@@ -9,11 +9,15 @@
 - 内置及自定义中文违禁词和其拼音写法。
 - 纯空白消息和连续空行达到阈值的消息。
 
-命中后会调用 `event.stop_event()`，阻止后续插件和 LLM 继续处理。启用撤回时，`aiocqhttp` / OneBot 适配器会调用 `delete_msg` 只尝试撤回当前命中的新消息；其他平台没有统一的撤回接口，但仍会阻止后续处理并记录日志。
+命中后会调用 `event.stop_event()`，阻止后续插件和 LLM 继续处理。启用撤回时，`aiocqhttp` / OneBot 适配器会调用 `delete_msg`；QQ 官方文字子频道会调用官方 `recall_message`。只尝试撤回当前命中的新消息，失败会记录日志，拦截继续生效。
 
 ### QQ 官方 Bot 的能力与验证
 
-QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook`）收到的文字消息均走相同检测逻辑。插件使用可匹配空文本、多行文本的全消息正则入口，以高优先级运行；命中后停止后续事件处理，并调用 `should_call_llm(True)` 禁止本事件的默认 LLM 请求（AstrBot 的该参数表示“禁止”，不是“启用”）。本插件未实现官方 Bot 的用户消息撤回，因此 QQ 中原消息仍会存在；默认也不发送提示。
+QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook`）收到的文字消息均走相同检测逻辑。插件使用可匹配空文本、多行文本的全消息正则入口，以高优先级运行；命中后停止后续事件处理，并调用 `should_call_llm(True)` 禁止本事件的默认 LLM 请求（AstrBot 的该参数表示“禁止”，不是“启用”）。默认不发送拦截提示。
+
+v1.10.0 起支持 **QQ 官方文字子频道** 的违规成员消息撤回，开启“启用撤回”即可。机器人需要具备相应频道管理权限及 API 权限：管理员可撤回普通成员消息，频道主可撤回所有人消息。WebSocket 与 Webhook 使用相同 SDK 接口；请求超时、权限不足或接口不可用时，不会把撤回记录为成功，也不会解除消息拦截。
+
+**QQ 普通群、单聊和频道私信无法通过公开官方接口撤回用户的违规消息。** 官方公开的普通群和单聊 DELETE 接口仅支持撤回机器人自己发送、且未超过 2 分钟的消息；频道私信也仅支持撤回机器人自己的消息。因此，这些会话仍只阻止机器人继续处理，并输出能力限制日志，不会把群号当作频道 ID 误调用频道撤回接口。依据：[腾讯官方撤回接口文档源码](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/api-v2/server-inter/message/send-receive/reset.md)、[官方 Python SDK 的频道撤回说明](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/pythonsdk/api/message/recall_message.md)。
 
 验证时可打开“发送拦截提示”（`enable_block_notice`），保存并重载插件，再向机器人发送词表中确实存在的词（如 `fuck`）。启动日志 `ready version=... keywords=... pinyin=... block_notice=...` 显示实际生效设置。每次进入检测都有 INFO 级别的 `inspect platform=...` 记录，不记录正文；命中日志包含 `blocked spam reason=banned_keyword`、平台名称与消息 ID，开启提示后还会尝试回复原因。
 

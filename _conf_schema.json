@@ -2,7 +2,7 @@
   "enable_recall": {
     "description": "启用撤回",
     "type": "bool",
-    "hint": "仅 OneBot / aiocqhttp 尝试撤回。QQ 官方 Bot（WebSocket / Webhook）命中后会停止 AstrBot 后续处理，但本插件不会撤回 QQ 中的用户原消息。",
+    "hint": "OneBot / aiocqhttp 和具备管理及接口权限的 QQ 官方文字子频道会尝试撤回当前违规消息。QQ 官方普通群、单聊和频道私信仅开放撤回机器人自身消息的接口，无法撤回用户原消息。",
     "default": true
   },
   "enable_block_notice": {

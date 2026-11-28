@@ -6,6 +6,7 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _install_astrbot_stubs():
@@ -79,6 +80,24 @@ class FakeBotApi:
         if self.fail:
             raise RuntimeError("recall failed")
         return {"ok": True}
+
+
+class FakeGuildMessage:
+    def __init__(self, channel_id="channel-1"):
+        self.channel_id = channel_id
+
+
+class FakeOfficialRecallApi:
+    def __init__(self, error=None, result=None):
+        self.calls = []
+        self.error = error
+        self.result = result
+
+    async def recall_message(self, channel_id, message_id, hidetip=False):
+        self.calls.append((channel_id, message_id, hidetip))
+        if self.error:
+            raise self.error
+        return self.result
 
 
 class FakeComponent:
@@ -185,6 +204,97 @@ class MainAdapterTests(unittest.TestCase):
 
     def make_plugin(self, **config):
         return self.main.KeywordMatcherPlugin(object(), config)
+
+    def make_guild_event(self, platform="qq_official", **api_options):
+        event = QQOfficialEvent("fuck", "current-message", platform)
+        event.message_obj.raw_message = FakeGuildMessage()
+        event.bot.api = FakeOfficialRecallApi(**api_options)
+        return event
+
+    def run_official_handler(self, plugin, event):
+        sdk = types.ModuleType("botpy.message")
+        sdk.Message = FakeGuildMessage
+        with patch.dict(sys.modules, {"botpy.message": sdk}):
+            asyncio.run(plugin.on_all_message(event))
+
+    def test_official_guild_recalls_current_message_for_both_transports(self):
+        for platform in ("qq_official", "qq_official_webhook"):
+            with self.subTest(platform=platform):
+                plugin = self.make_plugin()
+                event = self.make_guild_event(platform)
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertTrue(event.call_llm)
+                self.assertEqual(event.bot.api.calls, [("channel-1", "current-message", False)])
+                self.assertEqual(len(plugin._recalled_message_ids), 1)
+                self.run_official_handler(plugin, event)
+                self.assertEqual(len(event.bot.api.calls), 1)
+
+    def test_official_guild_recall_failure_preserves_blocking_and_allows_retry(self):
+        for options in ({"error": PermissionError("403 forbidden")}, {"result": {"code": 304023}}, {"result": False}):
+            with self.subTest(options=options):
+                plugin = self.make_plugin()
+                event = self.make_guild_event(**options)
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertTrue(event.call_llm)
+                self.assertEqual(plugin._recalled_message_ids, {})
+                event.bot.api.error = None
+                event.bot.api.result = None
+                self.run_official_handler(plugin, event)
+                self.assertEqual(len(event.bot.api.calls), 2)
+                self.assertEqual(len(plugin._recalled_message_ids), 1)
+
+    def test_official_incoming_group_and_private_messages_never_use_guild_api(self):
+        for source in (
+            types.SimpleNamespace(group_openid="group-1"),
+            types.SimpleNamespace(author=types.SimpleNamespace(user_openid="user-1")),
+            types.SimpleNamespace(guild_id="dm-guild", channel_id="dm-channel"),
+            {"channel_id": "unverified-channel"},
+        ):
+            with self.subTest(source=source):
+                plugin = self.make_plugin()
+                event = self.make_guild_event()
+                event.message_obj.raw_message = source
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertEqual(event.bot.api.calls, [])
+                self.assertEqual(plugin._recalled_message_ids, {})
+
+    def test_official_guild_recall_can_be_disabled(self):
+        plugin = self.make_plugin(enable_recall=False)
+        event = self.make_guild_event()
+        self.run_official_handler(plugin, event)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.bot.api.calls, [])
+
+    def test_official_guild_missing_api_or_channel_preserves_blocking(self):
+        for missing in ("api", "channel"):
+            with self.subTest(missing=missing):
+                plugin = self.make_plugin()
+                event = self.make_guild_event()
+                if missing == "api":
+                    event.bot.api = object()
+                else:
+                    event.message_obj.raw_message.channel_id = ""
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertEqual(plugin._recalled_message_ids, {})
+
+    def test_official_guild_recall_timeout_preserves_blocking(self):
+        plugin = self.make_plugin()
+        event = self.make_guild_event()
+
+        async def timeout(awaitable, timeout):
+            self.assertEqual(timeout, 5)
+            awaitable.close()
+            raise asyncio.TimeoutError
+
+        with patch.object(self.main.asyncio, "wait_for", timeout):
+            self.run_official_handler(plugin, event)
+        self.assertTrue(event.stopped)
+        self.assertTrue(event.call_llm)
+        self.assertEqual(plugin._recalled_message_ids, {})
 
     def test_official_adapters_block_keywords_without_onebot_api(self):
         for platform in ("qq_official", "qq_official_webhook"):

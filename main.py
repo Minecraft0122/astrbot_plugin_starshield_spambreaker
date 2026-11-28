@@ -20,7 +20,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.6"
+PLUGIN_VERSION = "1.10.0"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -442,16 +442,9 @@ class KeywordMatcherPlugin(Star):
         message_id: str,
     ) -> bool:
         platform_name = _value_from_event(event, "get_platform_name")
+        if platform_name in {"qq_official", "qq_official_webhook"}:
+            return await self._recall_qq_official_message(event, message_id)
         if platform_name != "aiocqhttp":
-            if (
-                platform_name in {"qq_official", "qq_official_webhook"}
-                and platform_name not in self._warned_recall_platforms
-            ):
-                self._warned_recall_platforms.add(platform_name)
-                logger.warning(
-                    f"[{PLUGIN_NAME}] {platform_name}: 已停止 AstrBot 后续处理和默认 LLM 回复；"
-                    "本插件未实现 QQ 官方 Bot 的用户消息撤回，QQ 中的原消息仍会保留。"
-                )
             logger.debug(
                 f"[{PLUGIN_NAME}] platform={platform_name!r} has no generic recall API"
             )
@@ -473,6 +466,74 @@ class KeywordMatcherPlugin(Star):
         except Exception as exc:
             logger.warning(
                 f"[{PLUGIN_NAME}] failed to recall message_id={message_id}: {exc}"
+            )
+            return False
+        return True
+
+    async def _recall_qq_official_message(
+        self, event: AstrMessageEvent, message_id: str,
+    ) -> bool:
+        """Recall a member's guild-channel message when official API permits it."""
+        message_obj = getattr(event, "message_obj", None)
+        raw_message = (
+            message_obj.get("raw_message")
+            if isinstance(message_obj, dict)
+            else getattr(message_obj, "raw_message", None)
+        )
+        # Group/C2C/DM DELETE routes only recall the bot's own outgoing messages.
+        # Never send an incoming user's ID to those routes or reinterpret a
+        # group_openid/session_id as a guild channel ID.
+        is_channel_message = False
+        if raw_message is not None:
+            try:
+                from botpy.message import Message
+
+                is_channel_message = isinstance(raw_message, Message)
+            except ImportError:
+                logger.warning(f"[{PLUGIN_NAME}] QQ official recall SDK unavailable")
+                return False
+        if not is_channel_message:
+            platform_name = _value_from_event(event, "get_platform_name")
+            warning_key = f"{_value_from_event(event, 'get_platform_id')}:incoming-user-recall"
+            if warning_key not in self._warned_recall_platforms:
+                self._warned_recall_platforms.add(warning_key)
+                logger.warning(
+                    f"[{PLUGIN_NAME}] {platform_name}: 已停止 AstrBot 后续处理和默认 LLM 回复；"
+                    "QQ 官方普通群、单聊和频道私信的撤回接口仅支持机器人自己发送的消息，"
+                    "不能用来撤回本条用户消息。只有文字子频道支持按管理权限撤回成员消息。"
+                )
+            return False
+
+        channel_id = str(getattr(raw_message, "channel_id", "") or "")
+        if not channel_id:
+            logger.warning(f"[{PLUGIN_NAME}] QQ guild recall skipped: missing channel_id")
+            return False
+        api = getattr(getattr(event, "bot", None), "api", None)
+        recall_message = getattr(api, "recall_message", None)
+        if not callable(recall_message):
+            logger.warning(f"[{PLUGIN_NAME}] QQ guild recall API unavailable")
+            return False
+        try:
+            result = await asyncio.wait_for(
+                recall_message(channel_id=channel_id, message_id=message_id, hidetip=False),
+                timeout=5,
+            )
+            # botpy raises on HTTP errors and returns None on empty success.
+            # Also reject explicit error responses from compatible wrappers.
+            if result is False or (
+                isinstance(result, dict) and result.get("code") not in (None, 0)
+            ):
+                logger.warning(
+                    f"[{PLUGIN_NAME}] QQ guild recall rejected message_id={message_id}"
+                )
+                return False
+        except asyncio.TimeoutError:
+            logger.warning(f"[{PLUGIN_NAME}] QQ guild recall timed out message_id={message_id}")
+            return False
+        except Exception as exc:
+            logger.warning(
+                f"[{PLUGIN_NAME}] QQ guild recall failed message_id={message_id}: {exc}; "
+                "请检查机器人在频道中的管理权限和接口权限，消息拦截保持生效。"
             )
             return False
         return True

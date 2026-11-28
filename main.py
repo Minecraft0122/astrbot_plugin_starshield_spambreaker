@@ -4,6 +4,7 @@ import asyncio
 import functools
 import hashlib
 import json
+import re
 import time
 from threading import Lock
 from typing import Any
@@ -20,7 +21,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.10.0"
+PLUGIN_VERSION = "1.11.0"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -473,25 +474,28 @@ class KeywordMatcherPlugin(Star):
     async def _recall_qq_official_message(
         self, event: AstrMessageEvent, message_id: str,
     ) -> bool:
-        """Recall a member's guild-channel message when official API permits it."""
+        """Recall a group or guild member's message with the official API."""
         message_obj = getattr(event, "message_obj", None)
         raw_message = (
             message_obj.get("raw_message")
             if isinstance(message_obj, dict)
             else getattr(message_obj, "raw_message", None)
         )
-        # Group/C2C/DM DELETE routes only recall the bot's own outgoing messages.
-        # Never send an incoming user's ID to those routes or reinterpret a
-        # group_openid/session_id as a guild channel ID.
+        # Use raw adapter objects to distinguish ordinary groups from guild
+        # channels and private messages. Never substitute a session/sender ID.
         is_channel_message = False
+        is_group_message = False
         if raw_message is not None:
             try:
-                from botpy.message import Message
+                from botpy.message import GroupMessage, Message
 
                 is_channel_message = isinstance(raw_message, Message)
+                is_group_message = isinstance(raw_message, GroupMessage)
             except ImportError:
                 logger.warning(f"[{PLUGIN_NAME}] QQ official recall SDK unavailable")
                 return False
+        if is_group_message:
+            return await self._recall_qq_group_message(event, raw_message, message_id)
         if not is_channel_message:
             platform_name = _value_from_event(event, "get_platform_name")
             warning_key = f"{_value_from_event(event, 'get_platform_id')}:incoming-user-recall"
@@ -499,8 +503,8 @@ class KeywordMatcherPlugin(Star):
                 self._warned_recall_platforms.add(warning_key)
                 logger.warning(
                     f"[{PLUGIN_NAME}] {platform_name}: 已停止 AstrBot 后续处理和默认 LLM 回复；"
-                    "QQ 官方普通群、单聊和频道私信的撤回接口仅支持机器人自己发送的消息，"
-                    "不能用来撤回本条用户消息。只有文字子频道支持按管理权限撤回成员消息。"
+                    "本条事件不是可识别的 QQ 群消息或文字子频道消息；"
+                    "单聊和频道私信无法撤回用户消息，未知事件不会猜测撤回目标。"
                 )
             return False
 
@@ -534,6 +538,61 @@ class KeywordMatcherPlugin(Star):
             logger.warning(
                 f"[{PLUGIN_NAME}] QQ guild recall failed message_id={message_id}: {exc}; "
                 "请检查机器人在频道中的管理权限和接口权限，消息拦截保持生效。"
+            )
+            return False
+        return True
+
+    async def _recall_qq_group_message(
+        self, event: AstrMessageEvent, raw_message: Any, message_id: str,
+    ) -> bool:
+        """Recall GROUP_MESSAGE_CREATE/GROUP_AT_MESSAGE_CREATE by raw d.id."""
+        group_openid = str(getattr(raw_message, "group_openid", "") or "")
+        raw_id = str(getattr(raw_message, "id", "") or "")
+        if not group_openid or not raw_id or raw_id != message_id:
+            logger.warning(
+                f"[{PLUGIN_NAME}] QQ group recall skipped: missing group_openid/id "
+                "or incoming message ID mismatch"
+            )
+            return False
+        api = getattr(getattr(event, "bot", None), "api", None)
+        request = getattr(getattr(api, "_http", None), "request", None)
+        if not callable(request):
+            logger.warning(f"[{PLUGIN_NAME}] QQ group recall HTTP client unavailable")
+            return False
+        try:
+            from botpy.http import Route
+
+            route = Route(
+                "DELETE", "/v2/groups/{group_openid}/messages/{message_id}",
+                group_openid=group_openid, message_id=raw_id,
+            )
+            result = await asyncio.wait_for(request(route), timeout=5)
+            if result is False:
+                logger.warning(f"[{PLUGIN_NAME}] QQ group recall rejected message_id={message_id}")
+                return False
+            code = result.get("code") if isinstance(result, dict) else None
+            if code not in (None, 0, "0"):
+                raise RuntimeError(f"QQ API code={code}")
+        except Exception as exc:
+            # botpy encodes HTTP error JSON in its exception text. Read only
+            # known numeric codes; never include client credentials or headers.
+            code = next((int(item) for item in re.findall(r"(?<!\d)(?:4006\d{4}|50065001)(?!\d)", str(exc))), None)
+            if code in {40064009, 40064010}:
+                logger.info(
+                    f"[{PLUGIN_NAME}] QQ group message already recalled "
+                    f"message_id={message_id} code={code}"
+                )
+                return True
+            reasons = {
+                40061001: "请求参数无效，请检查群 OpenID 和原始消息 ID",
+                40062003: "无操作权限：请将机器人设为群管理员，且目标发送者应为普通群成员",
+                40064004: "消息已超过 2 分钟撤回时限",
+                50065001: "QQ 平台撤回失败，请稍后重试",
+            }
+            reason = reasons.get(code, "撤回超时" if isinstance(exc, asyncio.TimeoutError) else str(exc))
+            logger.warning(
+                f"[{PLUGIN_NAME}] QQ group recall failed message_id={message_id} "
+                f"code={code}: {reason}；消息拦截保持生效。"
             )
             return False
         return True

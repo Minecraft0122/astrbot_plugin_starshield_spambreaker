@@ -9,7 +9,7 @@
 - 内置及自定义中文违禁词和其拼音写法。
 - 纯空白消息和连续空行达到阈值的消息。
 
-命中后会调用 `event.stop_event()`，阻止后续插件和 LLM 继续处理。启用撤回时，`aiocqhttp` / OneBot 适配器会调用 `delete_msg`；QQ 官方文字子频道会调用官方 `recall_message`。只尝试撤回当前命中的新消息，失败会记录日志，拦截继续生效。
+命中后会调用 `event.stop_event()`，阻止后续插件和 LLM 继续处理。启用撤回时，`aiocqhttp` / OneBot 适配器会调用 `delete_msg`；QQ 官方群聊调用 API v2 群消息 DELETE 接口，文字子频道调用 `recall_message`。只尝试撤回当前命中的新消息，失败会记录日志，拦截继续生效。
 
 ### QQ 官方 Bot 的能力与验证
 
@@ -17,7 +17,13 @@ QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook
 
 v1.10.0 起支持 **QQ 官方文字子频道** 的违规成员消息撤回，开启“启用撤回”即可。机器人需要具备相应频道管理权限及 API 权限：管理员可撤回普通成员消息，频道主可撤回所有人消息。WebSocket 与 Webhook 使用相同 SDK 接口；请求超时、权限不足或接口不可用时，不会把撤回记录为成功，也不会解除消息拦截。
 
-**QQ 普通群、单聊和频道私信无法通过公开官方接口撤回用户的违规消息。** 官方公开的普通群和单聊 DELETE 接口仅支持撤回机器人自己发送、且未超过 2 分钟的消息；频道私信也仅支持撤回机器人自己的消息。因此，这些会话仍只阻止机器人继续处理，并输出能力限制日志，不会把群号当作频道 ID 误调用频道撤回接口。依据：[腾讯官方撤回接口文档源码](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/api-v2/server-inter/message/send-receive/reset.md)、[官方 Python SDK 的频道撤回说明](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/pythonsdk/api/message/recall_message.md)。
+v1.11.0 起支持 **QQ 官方普通群的用户违规消息撤回**。以[官方 API v2 群消息撤回页面](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages_message_id.delete.html)为准：机器人必须是群管理员，目标发送者是普通群成员，消息发送不超过 2 分钟。普通成员身份的机器人只能撤回自己发送的消息，无法处理此处的用户违规消息。旧版文档中“普通群仅支持撤回机器人自身消息”的结论已纠正。
+
+群聊使用 `DELETE /v2/groups/{group_openid}/messages/{message_id}`，群 OpenID 和消息 ID 读取自原始 `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` 事件。复用 AstrBot 已鉴权的 botpy HTTP 客户端，无需填写额外 Token。WebSocket 与 Webhook 均支持；不会把群 OpenID 传给频道接口。
+
+撤回成功会输出 `recalled message_id=...`。错误 `40062003` 表示权限不足，`40064004` 表示超过两分钟；`40064009`、`40064010` 表示已被其他成员或本机器人撤回，按已完成处理，不重复请求。若 SDK 的异常信息保留错误码，日志会附对应说明；否则保留 SDK 返回的错误信息。单次请求超时为 5 秒，权限、时限、平台限流或其他接口失败不会解除消息拦截。接口频率上限为 10 QPS。
+
+单聊和频道私信的用户消息仍不调用群聊或文字子频道撤回接口。
 
 验证时可打开“发送拦截提示”（`enable_block_notice`），保存并重载插件，再向机器人发送词表中确实存在的词（如 `fuck`）。启动日志 `ready version=... keywords=... pinyin=... block_notice=...` 显示实际生效设置。每次进入检测都有 INFO 级别的 `inspect platform=...` 记录，不记录正文；命中日志包含 `blocked spam reason=banned_keyword`、平台名称与消息 ID，开启提示后还会尝试回复原因。
 

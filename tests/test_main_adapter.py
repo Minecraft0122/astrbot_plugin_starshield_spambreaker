@@ -87,6 +87,19 @@ class FakeGuildMessage:
         self.channel_id = channel_id
 
 
+class FakeGroupMessage:
+    def __init__(self, group_openid="raw-group", message_id="current-message"):
+        self.group_openid = group_openid
+        self.id = message_id
+
+
+class FakeRoute:
+    def __init__(self, method, path, **parameters):
+        self.method = method
+        self.path = path
+        self.parameters = parameters
+
+
 class FakeOfficialRecallApi:
     def __init__(self, error=None, result=None):
         self.calls = []
@@ -214,8 +227,78 @@ class MainAdapterTests(unittest.TestCase):
     def run_official_handler(self, plugin, event):
         sdk = types.ModuleType("botpy.message")
         sdk.Message = FakeGuildMessage
-        with patch.dict(sys.modules, {"botpy.message": sdk}):
+        sdk.GroupMessage = FakeGroupMessage
+        http = types.ModuleType("botpy.http")
+        http.Route = FakeRoute
+        with patch.dict(sys.modules, {"botpy.message": sdk, "botpy.http": http}):
             asyncio.run(plugin.on_all_message(event))
+
+    def make_group_event(self, platform="qq_official", result=None, error=None):
+        event = QQOfficialEvent("fuck", "current-message", platform)
+        event.message_obj.raw_message = FakeGroupMessage()
+        calls = []
+
+        async def request(route):
+            calls.append(route)
+            if error:
+                raise error
+            return result
+
+        event.bot.api = types.SimpleNamespace(_http=types.SimpleNamespace(request=request))
+        return event, calls
+
+    def test_official_group_recalls_raw_incoming_id_with_authenticated_client(self):
+        for platform in ("qq_official", "qq_official_webhook"):
+            for result in (None, "", {}, {"code": 0}):
+                with self.subTest(platform=platform, result=result):
+                    plugin = self.make_plugin()
+                    event, calls = self.make_group_event(platform, result=result)
+                    self.run_official_handler(plugin, event)
+                    self.assertTrue(event.stopped)
+                    self.assertTrue(event.call_llm)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0].method, "DELETE")
+                    self.assertEqual(calls[0].path, "/v2/groups/{group_openid}/messages/{message_id}")
+                    self.assertEqual(calls[0].parameters, {"group_openid": "raw-group", "message_id": "current-message"})
+                    self.assertEqual(len(plugin._recalled_message_ids), 1)
+                    self.run_official_handler(plugin, event)
+                    self.assertEqual(len(calls), 1)
+
+    def test_official_group_error_codes_preserve_blocking_and_success_cache(self):
+        for code in (40061001, 40062003, 40064004, 40064009, 40064010, 50065001):
+            for as_exception in (False, True):
+                with self.subTest(code=code, as_exception=as_exception):
+                    plugin = self.make_plugin()
+                    options = {"error": RuntimeError(f'{{"code":{code}}}')} if as_exception else {"result": {"code": code}}
+                    event, calls = self.make_group_event(**options)
+                    self.run_official_handler(plugin, event)
+                    self.assertTrue(event.stopped)
+                    self.assertTrue(event.call_llm)
+                    self.assertEqual(len(plugin._recalled_message_ids), int(code in (40064009, 40064010)))
+                    self.assertEqual(len(calls), 1)
+
+    def test_official_group_invalid_raw_identifiers_do_not_send_delete(self):
+        for raw in (FakeGroupMessage(""), FakeGroupMessage(message_id=""), FakeGroupMessage(message_id="other-message")):
+            with self.subTest(raw=raw):
+                plugin = self.make_plugin()
+                event, calls = self.make_group_event()
+                event.message_obj.raw_message = raw
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertEqual(calls, [])
+
+    def test_official_group_recall_disabled_missing_client_and_timeout(self):
+        for mode in ("disabled", "missing-client", "timeout"):
+            with self.subTest(mode=mode):
+                plugin = self.make_plugin(enable_recall=mode != "disabled")
+                event, calls = self.make_group_event(error=asyncio.TimeoutError() if mode == "timeout" else None)
+                if mode == "missing-client":
+                    event.bot.api = object()
+                self.run_official_handler(plugin, event)
+                self.assertTrue(event.stopped)
+                self.assertTrue(event.call_llm)
+                self.assertEqual(len(calls), int(mode == "timeout"))
+                self.assertEqual(plugin._recalled_message_ids, {})
 
     def test_official_guild_recalls_current_message_for_both_transports(self):
         for platform in ("qq_official", "qq_official_webhook"):

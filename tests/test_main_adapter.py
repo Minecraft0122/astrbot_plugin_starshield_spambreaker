@@ -153,6 +153,9 @@ class QQOfficialEvent(FakeEvent):
     def get_platform_id(self):
         return "official-instance-1"
 
+    def get_message_str(self):
+        return self.message_str
+
     def should_call_llm(self, enabled):
         self.call_llm = enabled
 

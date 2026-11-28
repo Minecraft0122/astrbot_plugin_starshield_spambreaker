@@ -45,6 +45,10 @@ class SpamDetectorTests(unittest.TestCase):
             "banned_keyword",
         )
 
+    def test_builtin_keyword_remains_active_when_saved_list_is_empty(self):
+        detector = self.make_detector(banned_words=[])
+        self.assertEqual(detector.check("group:user", "fuck", timestamp=0).reason, "banned_keyword")
+
     def test_separator_only_keywords_do_not_match_every_message(self):
         for keyword in ("!!!", "---", "\u200b"):
             with self.subTest(keyword=keyword):

@@ -203,6 +203,11 @@ class PinyinKeywordDetector:
             words = [str(word) for word in raw_words]
         else:
             words = []
+        # An empty/missing saved list is treated as an uninitialized profile.
+        # A non-empty administrator list remains authoritative so custom
+        # deployments can intentionally narrow the built-in set.
+        if not words:
+            words = list(DEFAULT_BANNED_WORDS)
         self.words = tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
         self.literal_forms = tuple(
             (word, normalize_text(word), _compact_keyword_text(word))

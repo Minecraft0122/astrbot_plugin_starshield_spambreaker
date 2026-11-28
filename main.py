@@ -19,7 +19,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.2"
+PLUGIN_VERSION = "1.9.3"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -53,6 +53,12 @@ def _config_bool(config: AstrBotConfig | dict, key: str, default: bool) -> bool:
 
 def _message_text(event: AstrMessageEvent) -> str:
     value = getattr(event, "message_str", "")
+    getter = getattr(event, "get_message_str", None)
+    if callable(getter):
+        try:
+            value = getter()
+        except Exception:
+            pass
     if callable(value):
         try:
             value = value()
@@ -274,7 +280,7 @@ class KeywordMatcherPlugin(Star):
         media_key = _media_comparison_key(event)
         message_id = _message_id(event)
         platform_name = _value_from_event(event, "get_platform_name")
-        logger.debug(
+        logger.info(
             f"[{PLUGIN_NAME}] inspect platform={platform_name!r} "
             f"instance={platform_id!r} message_id={message_id!r} "
             f"text_chars={len(text)} has_media={bool(media_key)}"

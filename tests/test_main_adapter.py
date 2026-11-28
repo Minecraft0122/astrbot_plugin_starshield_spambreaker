@@ -153,7 +153,8 @@ class QQOfficialEvent(FakeEvent):
         self.components = [types.SimpleNamespace(toDict=lambda: {"type": "At", "qq": "qq_official"}), FakePlainComponent(text)]
         if plain_only:
             self.message_str = ""
-        self.call_llm = True
+        # AstrBot initializes this to False; True prohibits the default LLM.
+        self.call_llm = False
         self.notices = []
         self.notice_failure = False
 
@@ -193,7 +194,7 @@ class MainAdapterTests(unittest.TestCase):
                     event = QQOfficialEvent("傻逼", "official-id", platform, plain_only=plain_only)
                     asyncio.run(plugin.on_all_message(event))
                     self.assertTrue(event.stopped)
-                    self.assertFalse(event.call_llm)
+                    self.assertTrue(event.call_llm)
                     self.assertEqual(event.bot.api.calls, [])
                     self.assertEqual(event.notices, [])
 
@@ -202,7 +203,7 @@ class MainAdapterTests(unittest.TestCase):
         event = QQOfficialEvent("   ", "blank-id")
         asyncio.run(plugin.on_all_message(event))
         self.assertTrue(event.stopped)
-        self.assertFalse(event.call_llm)
+        self.assertTrue(event.call_llm)
 
     def test_official_block_notice_and_send_failure_preserve_blocking(self):
         for fail in (False, True):
@@ -212,7 +213,7 @@ class MainAdapterTests(unittest.TestCase):
                 event.notice_failure = fail
                 asyncio.run(plugin.on_all_message(event))
                 self.assertTrue(event.stopped)
-                self.assertFalse(event.call_llm)
+                self.assertTrue(event.call_llm)
                 self.assertEqual(len(event.notices), 0 if fail else 1)
                 if not fail:
                     self.assertIn("违禁词", event.notices[0])
@@ -222,8 +223,42 @@ class MainAdapterTests(unittest.TestCase):
         event = QQOfficialEvent("你好，今天的天气怎么样", "normal-id")
         asyncio.run(plugin.on_all_message(event))
         self.assertFalse(event.stopped)
-        self.assertTrue(event.call_llm)
+        self.assertFalse(event.call_llm)
         self.assertEqual(event.notices, [])
+
+    def test_original_plain_keeps_trailing_blank_lines_after_waking_trim(self):
+        plugin = self.make_plugin()
+        event = QQOfficialEvent("正文" + "\n" * 8, "trailing-lines")
+        event.message_str = event.message_str.strip()
+        asyncio.run(plugin.on_all_message(event))
+        self.assertTrue(event.stopped)
+
+    def test_original_text_is_checked_after_wake_prefix_is_removed(self):
+        plugin = self.make_plugin()
+        event = QQOfficialEvent("fuck 你好", "wake-prefix")
+        event.message_str = "你好"
+        asyncio.run(plugin.on_all_message(event))
+        self.assertTrue(event.stopped)
+
+    def test_message_object_preserves_raw_text_without_plain_components(self):
+        plugin = self.make_plugin()
+        event = QQOfficialEvent("正文", "raw-object")
+        event.components = []
+        event.message_obj.message_str = "正文" + "\n" * 8
+        asyncio.run(plugin.on_all_message(event))
+        self.assertTrue(event.stopped)
+
+    def test_empty_configured_word_list_does_not_apply_hidden_defaults(self):
+        plugin = self.make_plugin(banned_words=[], initialize_banned_words=False)
+        event = QQOfficialEvent("fuck", "empty-list")
+        asyncio.run(plugin.on_all_message(event))
+        self.assertFalse(event.stopped)
+
+    def test_disabling_pinyin_keeps_literal_keyword_detection(self):
+        plugin = self.make_plugin(enable_pinyin_keywords=False)
+        event = QQOfficialEvent("fuck", "literal-only")
+        asyncio.run(plugin.on_all_message(event))
+        self.assertTrue(event.stopped)
 
     def test_detection_precedes_default_priority_reply_handler(self):
         plugin = self.make_plugin()

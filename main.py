@@ -19,7 +19,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.4"
+PLUGIN_VERSION = "1.9.5"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -52,6 +52,31 @@ def _config_bool(config: AstrBotConfig | dict, key: str, default: bool) -> bool:
 
 
 def _message_text(event: AstrMessageEvent) -> str:
+    # WakingCheckStage strips whitespace and removes wake prefixes from
+    # event.message_str. Inspect the original top-level Plain chain first.
+    get_messages = getattr(event, "get_messages", None)
+    try:
+        components = get_messages() if callable(get_messages) else []
+    except Exception:
+        components = []
+    parts = []
+    for component in components or []:
+        data = _component_mapping(component)
+        component_type = str(data.get("type", getattr(component, "type", "")))
+        if component_type.lower().split(".")[-1] in {"plain", "text"}:
+            content = data.get("data", data)
+            if isinstance(content, dict):
+                parts.append(str(content.get("text", "") or ""))
+    if parts:
+        return "".join(parts)
+    message_obj = getattr(event, "message_obj", None)
+    original = (
+        message_obj.get("message_str")
+        if isinstance(message_obj, dict)
+        else getattr(message_obj, "message_str", None)
+    )
+    if isinstance(original, str):
+        return original
     value = getattr(event, "message_str", "")
     getter = getattr(event, "get_message_str", None)
     if callable(getter):
@@ -64,24 +89,7 @@ def _message_text(event: AstrMessageEvent) -> str:
             value = value()
         except Exception:
             value = ""
-    if value:
-        return str(value)
-    get_messages = getattr(event, "get_messages", None)
-    try:
-        components = get_messages() if callable(get_messages) else []
-    except Exception:
-        components = []
-    # Some integrations expose the original Plain chain but leave message_str
-    # empty. Read only top-level text, never quoted messages or attachment URLs.
-    parts = []
-    for component in components or []:
-        data = _component_mapping(component)
-        component_type = str(data.get("type", getattr(component, "type", "")))
-        if component_type.lower().split(".")[-1] in {"plain", "text"}:
-            content = data.get("data", data)
-            if isinstance(content, dict):
-                parts.append(str(content.get("text", "") or ""))
-    return "".join(parts)
+    return str(value or "")
 
 
 def _message_id(event: AstrMessageEvent) -> str:
@@ -226,6 +234,12 @@ class KeywordMatcherPlugin(Star):
         self._detector_lock = Lock()
         self._recalled_message_ids: dict[str, float] = {}
         self._warned_recall_platforms: set[str] = set()
+        logger.info(
+            f"[{PLUGIN_NAME}] ready version={PLUGIN_VERSION} "
+            f"keywords={len(self.detector.pinyin_detector.words)} "
+            f"pinyin={self.detector.pinyin_detector.enabled} "
+            f"block_notice={_config_bool(self.config, 'enable_block_notice', False)}"
+        )
 
     def _initialize_keyword_list(self) -> None:
         """Persist defaults once so upgrades expose the effective list in WebUI."""
@@ -261,10 +275,8 @@ class KeywordMatcherPlugin(Star):
                 raise
         logger.info(f"[{PLUGIN_NAME}] initialized keyword list ({len(words)} entries)")
 
-    # A catch-all regex makes this a pre-processing handler for every adapter,
-    # including QQ Official versions whose MessageType mapping may differ.
-    # DOTALL is required for blank-line messages and ``.*`` also matches empty
-    # text, so media-only events still reach the detector.
+    # Match every text shape, including empty/media-only and multiline events.
+    # This handler still runs in ProcessStage, after framework-level checks.
     @filter.regex(r"(?s).*", priority=10000)
     async def on_all_message(self, event: AstrMessageEvent):
         """检查所有消息，命中刷屏规则后停止后续处理并尽力撤回。"""
@@ -305,7 +317,8 @@ class KeywordMatcherPlugin(Star):
         event.stop_event()
         should_call_llm = getattr(event, "should_call_llm", None)
         if callable(should_call_llm):
-            should_call_llm(False)
+            # Despite its name, AstrBot's flag means "disable default LLM".
+            should_call_llm(True)
         logger.info(
             f"[{PLUGIN_NAME}] blocked spam reason={decision.reason} "
             f"sender={sender_name or sender_id or 'unknown'!r} "

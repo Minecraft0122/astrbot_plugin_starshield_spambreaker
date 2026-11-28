@@ -203,10 +203,9 @@ class PinyinKeywordDetector:
             words = [str(word) for word in raw_words]
         else:
             words = []
-        # An empty/missing saved list is treated as an uninitialized profile.
-        # A non-empty administrator list remains authoritative so custom
-        # deployments can intentionally narrow the built-in set.
-        if not words:
+        # Restore legacy uninitialized profiles, but respect an explicitly
+        # emptied list after migration so WebUI and detection stay consistent.
+        if not words and _as_bool(config.get("initialize_banned_words"), True):
             words = list(DEFAULT_BANNED_WORDS)
         self.words = tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
         self.literal_forms = tuple(
@@ -221,13 +220,15 @@ class PinyinKeywordDetector:
                     self.index.setdefault(form, word)
 
     def check(self, text: str) -> str:
-        if not self.enabled or not self.index or not text:
+        if not text:
             return ""
         normalized = normalize_text(text)
         compact = _compact_keyword_text(text)
         for word, literal, compact_word in self.literal_forms:
             if literal in normalized or (compact_word and compact_word in compact):
                 return word
+        if not self.enabled or not self.index:
+            return ""
         # Compare contiguous alphanumeric runs to avoid matching a short pinyin
         # syllable inside unrelated English words.
         for token in re.findall(

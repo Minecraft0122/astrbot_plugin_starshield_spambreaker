@@ -13,9 +13,11 @@
 
 ### QQ 官方 Bot 的能力与验证
 
-QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook`）收到的文字消息均走相同检测逻辑。插件使用全消息正则过滤器作为入口，避免不同 AstrBot 版本的官方 Bot 消息类型枚举差异导致 handler 不激活；检测以高优先级运行，命中后停止后续事件处理并关闭本事件的默认 LLM 调用。本插件未实现官方 Bot 的用户消息撤回，因此 QQ 中原消息仍会存在；默认也不发送提示。
+QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook`）收到的文字消息均走相同检测逻辑。插件使用可匹配空文本、多行文本的全消息正则入口，以高优先级运行；命中后停止后续事件处理，并调用 `should_call_llm(True)` 禁止本事件的默认 LLM 请求（AstrBot 的该参数表示“禁止”，不是“启用”）。本插件未实现官方 Bot 的用户消息撤回，因此 QQ 中原消息仍会存在；默认也不发送提示。
 
-验证时可打开“发送拦截提示”（`enable_block_notice`），保存并重载插件，再向机器人发送词表中确实存在的词（如 `傻逼`）。命中日志包含 `blocked spam reason=banned_keyword`、平台名称与消息 ID，开启提示后还会尝试回复原因。日志级别为 DEBUG 时，每次进入检测都有 `inspect platform=...` 记录，不记录正文。如果没有进入检测日志，请检查插件是否加载成功、是否被当前配置启用，以及官方平台是否确实将该消息投递给 AstrBot。仅发送普通消息而未触发官方平台订阅/权限允许的事件时，插件无法检测未收到的消息。
+验证时可打开“发送拦截提示”（`enable_block_notice`），保存并重载插件，再向机器人发送词表中确实存在的词（如 `fuck`）。启动日志 `ready version=... keywords=... pinyin=... block_notice=...` 显示实际生效设置。每次进入检测都有 INFO 级别的 `inspect platform=...` 记录，不记录正文；命中日志包含 `blocked spam reason=banned_keyword`、平台名称与消息 ID，开启提示后还会尝试回复原因。
+
+AstrBot 的“收到消息”日志早于插件执行，因此它不能证明本插件已经运行。在 AstrBot 4.28.2 中，插件选择（`plugin_set`）、会话内禁用列表（`disabled_plugins`）、会话白名单、会话停用、框架限流或前置安全检测，都可能使消息在本插件执行之前被跳过。如果有框架收消息日志但没有 `inspect`，应检查该消息实际匹配的配置文件是否选中了 `astrbot_plugin_keyword_matcher`，以及该会话的插件启用状态和上述前置限制。插件会遵守这些设置，不绕过管理员禁用。`EventMessageType.ALL` 在该版本也支持 QQ 官方消息；不能仅凭缺少日志归因于消息类型枚举。
 
 拦截只影响执行到本插件之后的 AstrBot 处理；优先级高于本插件的其他处理器、框架前置步骤和平台侧行为不在此范围内。提示发送也受官方接口权限和频率限制，发送失败会记日志，不会解除拦截。
 
@@ -35,7 +37,7 @@ QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook
 
 ## 违禁词与拼音检测
 
-在插件配置的 `banned_words` 列表中逐项填写中文关键词。列表默认已经写入内置辱骂、作弊和广告词库，可以直接添加、删除或批量导入。启用 `enable_pinyin_keywords` 后，插件会同时检查原文以及不带声调的拼音写法；多音字按有限组合展开，组合上限由 `pinyin_max_combinations` 控制。关键词之间插入换行、空格、标点、数字或常见形近字母时也会按紧凑形式检查，例如 `调\\n教`、`调1教`、`ѕhаbi`。此功能不代表完整的语义审核。
+在插件配置的 `banned_words` 列表中逐项填写中文关键词。列表默认已经写入内置辱骂、作弊和广告词库，可以直接添加、删除或批量导入。原文检测始终按词表生效；`enable_pinyin_keywords` 只控制额外的拼音和中文同音检测。多音字按有限组合展开，组合上限由 `pinyin_max_combinations` 控制。关键词之间插入换行、空格、标点、数字或常见形近字母时也会按紧凑形式检查，例如 `调\\n教`、`调1教`、`ѕhаbi`。检测优先使用原始顶层 Plain 消息段，避免框架裁剪首尾空白或移除唤醒前缀后漏检。此功能不代表完整的语义审核。
 
 拼音连续拼接也会检查，例如配置 `傻逼` 时 `nihaoshabi` 会命中；中文同音词只按完整连续汉字片段比较，避免把 `干嘛的` 误判成配置词 `妈的`。
 
@@ -47,4 +49,10 @@ QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook
 
 “随机尾缀近重复”只比较时间窗口内近期消息的公共前缀，不会删除原文，也不会把任意数字或英文内容一律当作随机字符。因此正常的不同问句、版本号或邀请码仍有机会被区分；如果实际群聊内容更短或更长，可以调低/调高 `near_duplicate_window_seconds`、`near_duplicate_min_chars`、`near_duplicate_prefix_ratio` 和 `near_duplicate_max_suffix_chars`。
 
-单条重复检测采用有界周期扫描，不使用可能发生灾难性回溯的正则表达式。超长消息只扫描有限首尾部分。
+单条重复检测采用有界周期扫描，不使用可能发生灾难性回溯的正则表达式。超长消息只扫描有限的首、中、尾部分。
+
+## 测试
+
+安装 `requirements.txt` 中的依赖后运行 `python -m unittest discover`。默认测试不需要启动 AstrBot。
+
+需要验证框架调度语义时，检出 AstrBot 的 `v4.28.2` 标签，将环境变量 `ASTRBOT_SOURCE` 指向其根目录，然后运行同一命令。额外测试会加载上游注册器、唤醒检查、会话插件筛选、插件执行和默认 LLM 判断源码，替换外部服务依赖后运行；未设置该变量时会跳过。这不等同于真实 QQ 平台联调。

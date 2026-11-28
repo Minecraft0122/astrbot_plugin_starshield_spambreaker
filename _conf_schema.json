@@ -20,7 +20,7 @@
   "enable_pinyin_keywords": {
     "description": "启用拼音违禁词检测",
     "type": "bool",
-    "hint": "检测配置词表的原文和无声调拼音写法。",
+    "hint": "启用后额外检测无声调拼音和中文同音写法；关闭后仍检测配置词表的原文。",
     "default": true
   },
   "banned_words": {

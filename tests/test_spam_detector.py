@@ -82,6 +82,12 @@ class SpamDetectorTests(unittest.TestCase):
             banned_words="傻逼", enable_pinyin_keywords=False
         )
         self.assertFalse(detector.check("group:user", "shabi", timestamp=0).blocked)
+        self.assertEqual(detector.check("group:user", "傻逼", timestamp=1).reason, "banned_keyword")
+        self.assertEqual(self.make_detector(enable_pinyin_keywords=False).check("u", "fuck").reason, "banned_keyword")
+
+    def test_migrated_empty_keyword_list_stays_empty(self):
+        detector = self.make_detector(banned_words=[], initialize_banned_words=False)
+        self.assertFalse(detector.check("u", "fuck").blocked)
 
     def test_keyword_detects_newline_split_hanzi(self):
         detector = self.make_detector(banned_words="调教\n你妈")

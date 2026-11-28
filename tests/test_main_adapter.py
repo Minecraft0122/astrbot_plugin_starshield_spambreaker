@@ -32,6 +32,13 @@ def _install_astrbot_stubs():
                 return function
             return decorate
 
+        @staticmethod
+        def regex(_pattern, **kwargs):
+            def decorate(function):
+                function.handler_priority = kwargs.get("priority", 0)
+                return function
+            return decorate
+
     Filter.EventMessageType = EventMessageType
 
     class AstrMessageEvent:

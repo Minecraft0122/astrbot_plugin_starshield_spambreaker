@@ -19,7 +19,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.3"
+PLUGIN_VERSION = "1.9.4"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -261,7 +261,11 @@ class KeywordMatcherPlugin(Star):
                 raise
         logger.info(f"[{PLUGIN_NAME}] initialized keyword list ({len(words)} entries)")
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=10000)
+    # A catch-all regex makes this a pre-processing handler for every adapter,
+    # including QQ Official versions whose MessageType mapping may differ.
+    # DOTALL is required for blank-line messages and ``.*`` also matches empty
+    # text, so media-only events still reach the detector.
+    @filter.regex(r"(?s).*", priority=10000)
     async def on_all_message(self, event: AstrMessageEvent):
         """检查所有消息，命中刷屏规则后停止后续处理并尽力撤回。"""
 

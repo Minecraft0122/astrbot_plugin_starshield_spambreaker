@@ -19,6 +19,8 @@ QQ 官方 Bot 的 WebSocket（`qq_official`）和 Webhook（`qq_official_webhook
 
 AstrBot 的“收到消息”日志早于插件执行，因此它不能证明本插件已经运行。在 AstrBot 4.28.2 中，插件选择（`plugin_set`）、会话内禁用列表（`disabled_plugins`）、会话白名单、会话停用、框架限流或前置安全检测，都可能使消息在本插件执行之前被跳过。如果有框架收消息日志但没有 `inspect`，应检查该消息实际匹配的配置文件是否选中了 `astrbot_plugin_keyword_matcher`，以及该会话的插件启用状态和上述前置限制。插件会遵守这些设置，不绕过管理员禁用。`EventMessageType.ALL` 在该版本也支持 QQ 官方消息；不能仅凭缺少日志归因于消息类型枚举。
 
+v1.9.6 起，启动时还会输出 `routing registered=True active=True handler_enabled=True bound=True` 和 `routing profile='default' selected=True` 等诊断记录。`registered=False` 表示未找到入口；`bound=False` 表示未绑定到当前实例；`selected=False` 表示该配置的插件筛选不会选中入口。诊断还会输出过滤器、权限和会话白名单的启用状态及数量，不输出白名单内容。若这些状态正常但仍没有 `inspect`，将 AstrBot 核心日志级别切到 DEBUG 后重发，结合 `enabled_plugins_name`、`plugin ->` 和 `Stage ... stopped event propagation` 定位消息被跳过的具体步骤。
+
 拦截只影响执行到本插件之后的 AstrBot 处理；优先级高于本插件的其他处理器、框架前置步骤和平台侧行为不在此范围内。提示发送也受官方接口权限和频率限制，发送失败会记日志，不会解除拦截。
 
 ## 安装

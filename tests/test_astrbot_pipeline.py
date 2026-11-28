@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import enum
+import functools
 import inspect
 import os
 import re
@@ -19,6 +20,7 @@ import typing
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.test_main_adapter import QQOfficialEvent, _install_astrbot_stubs
 
@@ -102,7 +104,7 @@ class AstrBotPipelineTests(unittest.TestCase):
             ),
         )
         exec(compile(ast.fix_missing_locations(tree), str(path), "exec"), self.ns)
-        handler = self.plugin.on_all_message
+        handler = type(self.plugin).on_all_message
         plugin_tree = ast.parse(
             Path(self.main.__file__).read_text(encoding="utf-8-sig")
         )
@@ -132,6 +134,25 @@ class AstrBotPipelineTests(unittest.TestCase):
             activated=True,
             reserved=False,
         )
+        # Register the unbound method as import-time decorators do, then run
+        # the loader's real binding loop rather than supplying a bound method.
+        manager_path = root / "astrbot/core/star/star_manager.py"
+        manager_tree = ast.parse(manager_path.read_text(encoding="utf-8-sig"))
+        binding_loop = next(
+            node for node in ast.walk(manager_tree)
+            if isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id == "related_handlers"
+        )
+        self.bind_code = compile(
+            ast.fix_missing_locations(ast.Module(body=[binding_loop], type_ignores=[])),
+            str(manager_path), "exec",
+        )
+        self.ns.update(
+            functools=functools, related_handlers=[md], plugin_disabled=False,
+            metadata=types.SimpleNamespace(star_cls=self.plugin),
+        )
+        exec(self.bind_code, self.ns)
 
         self.session_plugin_config = {}
 
@@ -267,6 +288,45 @@ class AstrBotPipelineTests(unittest.TestCase):
         self.assertTrue(event.stopped)
         self.assertTrue(event.call_llm)
         self.assertEqual(replied, [])
+
+    def test_repeated_loader_binding_uses_current_instance_once(self):
+        replacement = self.main.KeywordMatcherPlugin(object(), {})
+        self.ns["metadata"].star_cls = replacement
+        exec(self.bind_code, self.ns)
+        exec(self.bind_code, self.ns)
+        callback = self.ns["related_handlers"][0].handler
+        self.assertEqual(callback.args, (replacement,))
+        event = self.event("fuck")
+        asyncio.run(self.dispatch(event))
+        self.assertTrue(event.call_llm)
+
+    def test_startup_reports_excluded_profile_without_changing_selection(self):
+        self.check_startup_report([], "selected=False")
+
+    def test_startup_reports_selected_profile_and_bound_handler(self):
+        self.check_startup_report(["*"], "selected=True")
+
+    def check_startup_report(self, selection, expected):
+        import sys
+
+        messages = []
+        config = {"plugin_set": selection}
+        self.plugin.context = types.SimpleNamespace(get_config=lambda: config)
+        star_module = types.ModuleType("astrbot.core.star.star")
+        star_module.star_map = self.ns["star_map"]
+        handler_module = types.ModuleType("astrbot.core.star.star_handler")
+        handler_module.EventType = self.ns["EventType"]
+        handler_module.star_handlers_registry = self.ns["star_handlers_registry"]
+        with patch.dict(sys.modules, {
+            "astrbot.core.star.star": star_module,
+            "astrbot.core.star.star_handler": handler_module,
+        }), patch.object(self.main, "logger", types.SimpleNamespace(
+            info=messages.append, warning=messages.append, error=messages.append,
+        )):
+            asyncio.run(self.plugin.initialize())
+        self.assertTrue(any(expected in message for message in messages), messages)
+        self.assertTrue(any("bound=True" in message for message in messages), messages)
+        self.assertEqual(config["plugin_set"], selection)
 
     def test_default_llm_remains_disabled_even_if_stop_result_is_cleared(self):
         event = self.event("fuck")

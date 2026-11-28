@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import time
@@ -19,7 +20,7 @@ except ImportError:  # AstrBot may load main.py as a standalone module.
 
 PLUGIN_NAME = "astrbot_plugin_keyword_matcher"
 PLUGIN_DISPLAY_NAME = "星盾·刷屏终结者"
-PLUGIN_VERSION = "1.9.5"
+PLUGIN_VERSION = "1.9.6"
 _VOLATILE_COMPONENT_KEYS = {"path", "time", "seq"}
 
 
@@ -240,6 +241,66 @@ class KeywordMatcherPlugin(Star):
             f"pinyin={self.detector.pinyin_detector.enabled} "
             f"block_notice={_config_bool(self.config, 'enable_block_notice', False)}"
         )
+
+    async def initialize(self) -> None:
+        """Report actual post-load registration and profile selection."""
+        try:
+            from astrbot.core.star.star import star_map
+            from astrbot.core.star.star_handler import EventType, star_handlers_registry
+
+            module_path = type(self).__module__
+            metadata = star_map.get(module_path)
+            handlers = [
+                handler
+                for handler in star_handlers_registry.get_handlers_by_module_name(module_path)
+                if handler.handler_name == "on_all_message"
+            ]
+            active = bool(metadata and metadata.activated)
+            for handler in handlers:
+                callback = handler.handler
+                bound = (
+                    isinstance(callback, functools.partial)
+                    and bool(callback.args)
+                    and callback.args[0] is self
+                ) or getattr(callback, "__self__", None) is self
+                logger.info(
+                    f"[{PLUGIN_NAME}] routing registered=True active={active} "
+                    f"handler_enabled={handler.enabled} bound={bound} "
+                    f"priority={handler.extras_configs.get('priority', 0)} "
+                    f"filters={[type(item).__name__ for item in handler.event_filters]} "
+                    f"permissions={[str(item.permission_type) for item in handler.event_filters if hasattr(item, 'permission_type')]}"
+                )
+                if not active or not handler.enabled or not bound:
+                    logger.warning(f"[{PLUGIN_NAME}] handler is not ready for message dispatch")
+            if not handlers:
+                logger.error(f"[{PLUGIN_NAME}] routing registered=False module={module_path!r}")
+
+            manager = getattr(self.context, "astrbot_config_mgr", None)
+            profiles = getattr(manager, "confs", None)
+            if not isinstance(profiles, dict):
+                get_config = getattr(self.context, "get_config", None)
+                profiles = {"default": get_config()} if callable(get_config) else {}
+            for profile_id, config in profiles.items():
+                plugin_set = config.get("plugin_set", ["*"])
+                eligible = star_handlers_registry.get_handlers_by_event_type(
+                    EventType.AdapterMessageEvent, plugins_name=plugin_set,
+                )
+                selected = any(handler in eligible for handler in handlers)
+                settings = config.get("platform_settings", {})
+                logger.info(
+                    f"[{PLUGIN_NAME}] routing profile={profile_id!r} selected={selected} "
+                    f"whitelist_enabled={settings.get('enable_id_white_list', False)} "
+                    f"whitelist_entries={len(settings.get('id_whitelist', []))}"
+                )
+                if not selected:
+                    logger.warning(
+                        f"[{PLUGIN_NAME}] profile={profile_id!r} does not dispatch messages "
+                        f"to this plugin; select {PLUGIN_NAME!r} in that profile's plugin_set "
+                        "and check plugin/handler activation"
+                    )
+        except Exception as exc:
+            # Diagnostics must never prevent an otherwise usable plugin loading.
+            logger.warning(f"[{PLUGIN_NAME}] routing diagnostics unavailable: {exc}")
 
     def _initialize_keyword_list(self) -> None:
         """Persist defaults once so upgrades expose the effective list in WebUI."""
